@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.pyc
+
+# Virtual Environment
+venv/
+.env
+
+# Mac
+.DS_Store
+
+# Uploaded datasets
+uploads/
+
+# IDE
+.vscode/
+.idea/
+
+# Database
+*.db
