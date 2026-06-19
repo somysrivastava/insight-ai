@@ -1,5 +1,7 @@
 from fastapi import FastAPI
 
+import app.models
+from app.database import Base, engine
 from app.routers.dataset import router
 
 app = FastAPI(
@@ -7,6 +9,11 @@ app = FastAPI(
     description="An AI-powered platform for data analysis and insights.",
     version="1.0.0",
 )
+
+Base.metadata.create_all(bind=engine)
+# create_all() looks at all classes that inherit from Base
+# and creates their tables in PostgreSQL if they don't already exist
+# This runs every time the server starts — safe to run multiple times
 
 
 @app.get("/")
