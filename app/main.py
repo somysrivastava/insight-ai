@@ -2,7 +2,7 @@ from fastapi import FastAPI
 
 import app.models
 from app.database import Base, engine
-from app.routers.dataset import router
+from app.routers import dataset, auth
 
 app = FastAPI(
     title="Insight AI",
@@ -31,4 +31,5 @@ def version():
     return {"version": "1.0.0"}
 
 
-app.include_router(router)
+app.include_router(dataset.router)
+app.include_router(auth.router)
