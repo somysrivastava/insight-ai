@@ -1,10 +1,11 @@
 import os
 import shutil
-from xxlimited import new
+
+from app.models.user import User
+from app.services.auth_service import get_current_user
 
 import pandas as pd
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from pandas.core.indexes.datetimes import _new_DatetimeIndex
 from sqlalchemy.orm import Session
 
 from app.database import (
@@ -21,7 +22,7 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 
 @router.post("/upload")
-async def upload_dataset(file: UploadFile = File(...), db: Session = Depends(get_db)):
+async def upload_dataset(file: UploadFile = File(...), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     # Depends(get_db) tells FastAPI: call get_db() and inject the session as "db"
     # Every request gets its own fresh session
 
@@ -33,7 +34,7 @@ async def upload_dataset(file: UploadFile = File(...), db: Session = Depends(get
     df = pd.read_csv(file_path)
 
     new_dataset = Dataset(
-        user_id=1,
+        user_id=current_user.id,
         filename=file.filename,
         file_path=file_path,
         row_count=len(df),

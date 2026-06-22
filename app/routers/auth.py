@@ -1,8 +1,7 @@
-from turtle import st
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pandas.core.internals.blocks import re
 from sqlalchemy.orm import Session
+from fastapi.security import OAuth2PasswordRequestForm
 
 from app.database import get_db
 from app.models.user import User
@@ -30,9 +29,9 @@ def signup(user_data: UserCreate, db: Session = Depends(get_db)):
     }
 #whats happening up we are chekcing if a user with existing mail already exists if yes return error if no create a new user and commit it into the datwbase
 @router.post("/login", response_model=TokenResponse)
-def login(user_data: UserLogin, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == user_data.email).first()
-    if not user or not verify_password(user_data.password, str(user.hashed_password)):
+def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == form_data.username).first()
+    if not user or not verify_password(form_data.password, str(user.hashed_password)):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials", headers={"WWW-Authenticate": "Bearer"})
     token = create_access_token(data={"sub": user.email})
     return {
