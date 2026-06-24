@@ -94,5 +94,5 @@ def get_dataset_summary(dataset_id: int, db: Session = Depends(get_db)):
         "columns": len(df.columns),
         "column_name": list(df.columns),
         "missing_values": df.isnull().sum().to_dict(),
-        "data_types": df.dtypes.to_dict(),
+        "data_types": {col: str(dtype) for col, dtype in df.dtypes.items()},
     }

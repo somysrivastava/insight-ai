@@ -139,36 +139,36 @@ def generate_breakdown(file_path: str, group_by: str) -> dict:
     df = load_dataframe(file_path)
     if group_by not in df.columns:
         raise ValueError(f"Column '{group_by}' not found in the dataset")
-        revenue_col = next((c for c in df.columns if "revenue" in c.lower()), None)
-        profit_col = next((c for c in df.columns if "profit" in c.lower()), None)
-        units_col = next((c for c in df.columns if "unit" in c.lower() and "sold" in c.lower()), None)
-    
-        agg_dict = {"_count": "size"}  # always count records per group
+    revenue_col = next((c for c in df.columns if "revenue" in c.lower()), None)
+    profit_col = next((c for c in df.columns if "profit" in c.lower()), None)
+    units_col = next((c for c in df.columns if "unit" in c.lower() and "sold" in c.lower()), None)
+
+    agg_dict = {"_count": "size"}  # always count records per group
     
         # Build aggregation dynamically based on what columns exist
-        agg_cols = {}
-        if revenue_col:
-            agg_cols[revenue_col] = "sum"
-        if profit_col:
-            agg_cols[profit_col] = "sum"
-        if units_col:
-            agg_cols[units_col] = "sum"
+    agg_cols = {}
+    if revenue_col:
+        agg_cols[revenue_col] = "sum"
+    if profit_col:
+        agg_cols[profit_col] = "sum"
+    if units_col:
+        agg_cols[units_col] = "sum"
+
+    if agg_cols:
+        grouped = df.groupby(group_by).agg(agg_cols).reset_index()
+    else:
+        grouped = df.groupby(group_by).size().reset_index(name="count")
+
+    count_series = df.groupby(group_by).size().reset_index(name="record_count")
+    grouped = grouped.merge(count_series, on=group_by)
+
+    if revenue_col and revenue_col in grouped.columns:
+        grouped = grouped.sort_values(revenue_col, ascending=False)
+        grouped[revenue_col] = grouped[revenue_col].round(2)
+    if profit_col and profit_col in grouped.columns:
+        grouped[profit_col] = grouped[profit_col].round(2)
     
-        if agg_cols:
-            grouped = df.groupby(group_by).agg(agg_cols).reset_index()
-        else:
-            grouped = df.groupby(group_by).size().reset_index(name="count")
-
-        count_series = df.groupby(group_by).size().reset_index(name="record_count")
-        grouped = grouped.merge(count_series, on=group_by)
-
-        if revenue_col and revenue_col in grouped.columns:
-            grouped = grouped.sort_values(revenue_col, ascending=False)
-            grouped[revenue_col] = grouped[revenue_col].round(2)
-        if profit_col and profit_col in grouped.columns:
-            grouped[profit_col] = grouped[profit_col].round(2)
-        
-        return {
-            "group_by": group_by,
-            "breakdown": grouped.to_dict(orient="records")
-        }
+    return {
+        "group_by": group_by,
+        "breakdown": grouped.to_dict(orient="records")
+    }
