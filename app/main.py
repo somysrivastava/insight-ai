@@ -1,4 +1,3 @@
-from reprlib import aRepr
 
 from fastapi import FastAPI
 
@@ -9,6 +8,7 @@ from app.routers.cleaning import router as cleaning_router
 from app.routers.analytics import router as analytics_router
 
 from app.routers import visualization
+from app.routers import reports
 
 app = FastAPI(
     title="Insight AI",
@@ -41,4 +41,5 @@ app.include_router(dataset.router)
 app.include_router(auth.router)
 app.include_router(cleaning_router)
 app.include_router(analytics_router)
+app.include_router(reports.router)
 app.include_router(visualization.router)
