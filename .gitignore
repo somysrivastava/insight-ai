@@ -1,21 +1,17 @@
 # Python
 __pycache__/
 *.pyc
-
 # Virtual Environment
 venv/
-.env
-
 # Mac
 .DS_Store
-
 # Uploaded datasets
 uploads/
-
 # IDE
 .vscode/
 .idea/
-
 # Database
-*.dblocal_backup.sql
+*.db
+local_backup.sql
+# Environment variables
 .env
