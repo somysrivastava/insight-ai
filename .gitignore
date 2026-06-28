@@ -17,4 +17,5 @@ uploads/
 .idea/
 
 # Database
-*.db
+*.dblocal_backup.sql
+.env

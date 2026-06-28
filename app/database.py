@@ -3,9 +3,12 @@ from sqlalchemy.orm import (
     declarative_base,  # this is the base class for all models
     sessionmaker,  # this is the sessionmaker to create sessions, (gives workspace)
 )
+import os
+from dotenv import load_dotenv
 
+load_dotenv()
 Base = declarative_base()
-DATABASE_URL = "postgresql://postgres:password@localhost:5432/insightai"
+DATABASE_URL = str(os.getenv("DATABASE_URL"))
 
 engine = create_engine(
     DATABASE_URL, echo=True
