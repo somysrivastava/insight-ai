@@ -15,3 +15,4 @@ uploads/
 local_backup.sql
 # Environment variables
 .env
+insightai-key.pem
