@@ -160,3 +160,146 @@ def generate_breakdown(file_path: str, group_by: str) -> dict:
         "group_by": group_by,
         "breakdown": grouped.to_dict(orient="records")
     }
+
+
+def _validate_query_column(df: pd.DataFrame, col_name, label: str) -> None:
+    if col_name and col_name not in df.columns:
+        raise ValueError(
+            f"{label} '{col_name}' not found in dataset. Available columns: {list(df.columns)}"
+        )
+
+
+_NULL_PLACEHOLDERS = {"", "null", "none", "n/a", "na"}
+
+
+def _normalize(value):
+    """
+    The model is instructed to use JSON null for an unused column/metric,
+    but isn't perfectly reliable about it in practice (observed empty
+    string and the literal text "null" for the same field on different
+    calls at temperature=0). Treat all of those as "not provided" rather
+    than trusting the model's exact spelling.
+    """
+    if isinstance(value, str) and value.strip().lower() in _NULL_PLACEHOLDERS:
+        return None
+    return value
+
+
+def execute_structured_query(df: pd.DataFrame, query: dict) -> dict:
+    """
+    Executes a structured query (as parsed by ai_service.py from a natural-
+    language question) against an already-loaded DataFrame.
+
+    Every column referenced by the query is validated against the real
+    DataFrame before use — the query may have been produced by an LLM that
+    was never shown the dataset's actual values, so this is the point where
+    hallucinated columns/values get caught and turned into a clean error
+    instead of a raw pandas KeyError.
+    """
+    operation = query["operation"]
+    column = _normalize(query.get("column"))
+    metric = _normalize(query.get("metric"))
+    aggregate = _normalize(query.get("aggregate")) or "sum"
+    filter_value = _normalize(query.get("filter_value"))
+    limit = query.get("limit") or 10
+    ascending = query.get("direction") == "asc"
+
+    if operation == "groupby":
+        _validate_query_column(df, column, "column")
+        _validate_query_column(df, metric, "metric")
+        if not column or not metric:
+            raise ValueError("groupby requires both 'column' and 'metric'")
+        grouped = (
+            df.groupby(column)[metric]
+            .agg(aggregate)
+            .reset_index()
+            .sort_values(metric, ascending=ascending)
+            .head(limit)
+        )
+        grouped[metric] = grouped[metric].round(2)
+        return {
+            "operation": operation,
+            "records": grouped.to_dict(orient="records"),
+            "row_count": len(grouped),
+        }
+
+    if operation == "filter":
+        _validate_query_column(df, column, "column")
+        if not column:
+            raise ValueError("filter requires 'column'")
+        if filter_value is None:
+            raise ValueError("filter requires 'filter_value'")
+
+        mask = df[column].astype(str).str.strip().str.lower() == str(filter_value).strip().lower()
+        if not mask.any():
+            raise ValueError(f"Value '{filter_value}' not found in column '{column}'.")
+
+        filtered = df[mask]
+
+        if metric:
+            _validate_query_column(df, metric, "metric")
+            if aggregate == "count":
+                value = int(mask.sum())
+            else:
+                series = pd.to_numeric(filtered[metric], errors="coerce").dropna()
+                value = round(float(getattr(series, aggregate)()), 2)
+            return {
+                "operation": operation,
+                "column": column,
+                "filter_value": filter_value,
+                "metric": metric,
+                "aggregate": aggregate,
+                "value": value,
+                "row_count": int(mask.sum()),
+            }
+
+        result = filtered.head(limit)
+        return {
+            "operation": operation,
+            "records": result.to_dict(orient="records"),
+            "row_count": int(mask.sum()),
+        }
+
+    if operation == "sort":
+        sort_col = metric or column
+        _validate_query_column(df, sort_col, "metric/column")
+        if not sort_col:
+            raise ValueError("sort requires 'metric' or 'column'")
+        sorted_df = df.sort_values(sort_col, ascending=ascending).head(limit)
+        return {
+            "operation": operation,
+            "records": sorted_df.to_dict(orient="records"),
+            "row_count": len(sorted_df),
+        }
+
+    if operation == "aggregate":
+        _validate_query_column(df, metric, "metric")
+        if not metric:
+            raise ValueError("aggregate requires 'metric'")
+        series = pd.to_numeric(df[metric], errors="coerce").dropna()
+        value = getattr(series, aggregate)()
+        return {
+            "operation": operation,
+            "metric": metric,
+            "aggregate": aggregate,
+            "value": round(float(value), 2),
+            "row_count": len(df),
+        }
+
+    if operation == "correlate":
+        _validate_query_column(df, column, "column")
+        _validate_query_column(df, metric, "metric")
+        if not column or not metric:
+            raise ValueError("correlate requires both 'column' and 'metric'")
+        series_a = pd.to_numeric(df[column], errors="coerce")
+        series_b = pd.to_numeric(df[metric], errors="coerce")
+        corr = series_a.corr(series_b)
+        return {
+            "operation": operation,
+            "column": column,
+            "metric": metric,
+            "correlation": None if pd.isna(corr) else round(float(corr), 3),
+            "row_count": len(df),
+        }
+
+    raise ValueError(f"Unsupported operation: {operation}")
