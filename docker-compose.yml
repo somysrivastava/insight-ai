@@ -1,25 +1,37 @@
+x-app-env: &app-env
+  env_file:
+    - .env
+  environment:
+    # Overrides whatever DATABASE_URL/REDIS_URL are in .env — inside this
+    # network "localhost" doesn't reach the db/redis containers. Shared
+    # between app and celery below via this anchor so both always agree
+    # — one source of truth, not two values that can drift apart.
+    DATABASE_URL: postgresql://${POSTGRES_USER:-insightai}:${POSTGRES_PASSWORD:-insightai}@db:5432/${POSTGRES_DB:-insightai_dev}
+    REDIS_URL: redis://redis:6379/0
+  volumes:
+    # Bind-mounts the whole project so code edits hot-reload without a
+    # rebuild (app) or take effect on the next task pickup (celery).
+    # app/uploads/ (LocalStorageBackend's target) lands on the host
+    # filesystem as a side effect — no separate volume needed, and it's
+    # visible identically to both containers.
+    - .:/app
+  depends_on:
+    db:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+
 services:
   app:
     build: .
     ports:
       - "8000:8000"
-    env_file:
-      - .env
-    environment:
-      # Overrides whatever DATABASE_URL is in .env — inside this network
-      # "localhost" doesn't reach the db container, so this always wins
-      # over the host-mode value, built from the same POSTGRES_* vars the
-      # db service below uses (one source of truth, not two to keep in
-      # sync).
-      DATABASE_URL: postgresql://${POSTGRES_USER:-insightai}:${POSTGRES_PASSWORD:-insightai}@db:5432/${POSTGRES_DB:-insightai_dev}
-    volumes:
-      # Bind-mounts the whole project so code edits hot-reload without a
-      # rebuild. app/uploads/ (LocalStorageBackend's target) lands on the
-      # host filesystem as a side effect — no separate volume needed.
-      - .:/app
-    depends_on:
-      db:
-        condition: service_healthy
+    <<: *app-env
+
+  celery:
+    build: .
+    command: celery -A app.worker worker --loglevel=info
+    <<: *app-env
 
   db:
     image: postgres:16-alpine
@@ -34,6 +46,19 @@ services:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-insightai}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    # Valkey: the Linux Foundation's fully open-source continuation of
+    # Redis (post-7.4 relicensing), protocol-compatible — a drop-in
+    # broker/result-backend for Celery. See docs/ADR.md ADR-010.
+    image: valkey/valkey:8-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
       interval: 5s
       timeout: 5s
       retries: 5

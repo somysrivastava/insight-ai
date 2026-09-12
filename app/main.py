@@ -10,6 +10,7 @@ from app.routers.analytics import router as analytics_router
 from app.routers import visualization
 from app.routers import reports
 from app.routers import ai
+from app.routers import jobs
 
 app = FastAPI(
     title="Insight AI",
@@ -45,3 +46,4 @@ app.include_router(analytics_router)
 app.include_router(reports.router)
 app.include_router(visualization.router)
 app.include_router(ai.router)
+app.include_router(jobs.router)
