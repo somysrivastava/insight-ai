@@ -1,0 +1,20 @@
+.git
+__pycache__/
+*.pyc
+venv/
+.DS_Store
+.vscode/
+.idea/
+
+# Internal docs — never enter the image, same as they never enter git
+docs/
+
+# Secrets — injected at container runtime via env_file, never baked
+# into an image layer
+.env
+insightai-key.pem
+local_backup.sql
+
+# Uploaded datasets — present via bind mount at runtime, not needed in
+# the build context
+app/uploads/*

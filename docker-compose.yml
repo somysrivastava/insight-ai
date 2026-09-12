@@ -1,0 +1,42 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      # Overrides whatever DATABASE_URL is in .env — inside this network
+      # "localhost" doesn't reach the db container, so this always wins
+      # over the host-mode value, built from the same POSTGRES_* vars the
+      # db service below uses (one source of truth, not two to keep in
+      # sync).
+      DATABASE_URL: postgresql://${POSTGRES_USER:-insightai}:${POSTGRES_PASSWORD:-insightai}@db:5432/${POSTGRES_DB:-insightai_dev}
+    volumes:
+      # Bind-mounts the whole project so code edits hot-reload without a
+      # rebuild. app/uploads/ (LocalStorageBackend's target) lands on the
+      # host filesystem as a side effect — no separate volume needed.
+      - .:/app
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-insightai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-insightai}
+      POSTGRES_DB: ${POSTGRES_DB:-insightai_dev}
+    ports:
+      # Host 5433 avoids clashing with a local Postgres already on 5432.
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-insightai}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
