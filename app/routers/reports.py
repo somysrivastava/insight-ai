@@ -30,6 +30,7 @@ from app.database import get_db
 from app.models.dataset import Dataset               # your SQLAlchemy Dataset model
 from app.models.user import User                     # your SQLAlchemy User model
 from app.services.auth_service import get_current_user   # your JWT dependency
+from app.services.storage_service import load_dataframe
 from app.services.report_service import generate_full_report, generate_executive_summary
 from app.services.kpi_service import compute_kpis
 from app.schemas.report import KPIReport, ExecutiveSummary, FullReport
@@ -74,7 +75,12 @@ def _load_dataset_df(
         )
 
     try:
-        df = pd.read_csv(dataset.file_path)
+        df = load_dataframe(dataset.file_path)
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Dataset file not found in storage.",
+        )
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

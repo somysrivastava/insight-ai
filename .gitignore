@@ -16,3 +16,5 @@ local_backup.sql
 # Environment variables
 .env
 insightai-key.pem
+# Internal docs — local only, never committed
+docs/

@@ -5,7 +5,6 @@
 # This separation means you can call visualization logic from background jobs,
 # other services, or tests — without going through HTTP.
 
-import os
 import json
 import pandas as pd
 import plotly.express as px
@@ -15,6 +14,7 @@ from sqlalchemy.orm import Session
 from fastapi import HTTPException
 
 from app.models.dataset import Dataset
+from app.services.storage_service import load_dataframe
 from app.schemas.visualization import (
     BarChartRequest,
     LineChartRequest,
@@ -40,18 +40,17 @@ COLOR_PALETTE = [
     "#98D8C8", "#F7DC6F"
 ]
 
-UPLOAD_DIR = "app/uploads"
-
 
 # ── Internal Helpers ────────────────────────────────────────────────────────
 
 def _load_dataset(dataset_id: int, user_id: int, db: Session) -> pd.DataFrame:
     """
-    Fetch dataset record from DB, load CSV into DataFrame.
-    
+    Fetch dataset record from DB, load it into a DataFrame via the shared
+    storage backend (local disk or S3, selected by STORAGE_BACKEND).
+
     WHY CENTRALIZED: Every chart endpoint needs the same load + auth check.
-    Extract it once. If the file storage changes (e.g. move to S3 on Build Day 12),
-    you update only this function.
+    Extract it once. The actual storage read lives in storage_service.py,
+    so a future storage change is a config change, not an edit here.
     """
     # Auth check: ensure this dataset belongs to the requesting user
     dataset = db.query(Dataset).filter(
@@ -62,12 +61,10 @@ def _load_dataset(dataset_id: int, user_id: int, db: Session) -> pd.DataFrame:
     if not dataset:
         raise HTTPException(status_code=404, detail="Dataset not found")
 
-    file_path = dataset.file_path
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="Dataset file not found on disk")
-
     try:
-        df = pd.read_csv(file_path)
+        df = load_dataframe(dataset.file_path)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Dataset file not found in storage")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to read dataset: {str(e)}")
 

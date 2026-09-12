@@ -1,21 +1,7 @@
-from hmac import new
-from pathlib import Path
-
 import numpy as np
 import pandas as pd
-from numpy.ma.core import filled
-from sqlalchemy import true
 
-
-def load_dataframe(file_path: str) -> pd.DataFrame:
-    path = Path(file_path)
-
-    if path.suffix == ".csv":
-        return pd.read_csv(file_path)
-    elif path.suffix in [".xlsx", ".xls"]:
-        return pd.read_excel(file_path)
-    else:
-        raise ValueError(f"Unsupported files")
+from app.services.storage_service import load_dataframe, save_dataframe
 
 
 def generate_quality_report(file_path: str) -> dict:
@@ -140,16 +126,18 @@ def clean_dataset(file_path: str, options: dict) -> dict:
 
         for col in numeric_cols:
             missing_before = df[col].isnull().sum()
-            if missing_before > 0:
+            if missing_before == 0:
                 continue
             if numeric_strategy == "median":
-                fill_value = df[col].median
+                fill_value = df[col].median()
             elif numeric_strategy == "mean":
-                fill_value = df[col].mean
+                fill_value = df[col].mean()
             elif numeric_strategy == "zero":
                 fill_value = 0
             else:
                 continue
+            df[col] = df[col].fillna(fill_value)
+            filled_cols.append(col)
         if filled_cols:
             changes.append(
                 f"Filled missing numeric values in {len(filled_cols)} columns using {numeric_strategy} strategy"
@@ -165,7 +153,7 @@ def clean_dataset(file_path: str, options: dict) -> dict:
 
         for col in cat_cols:
             missing_before = df[col].isnull().sum()
-            if missing_before > 0:
+            if missing_before == 0:
                 continue
 
             df[col] = df[col].fillna("Unknown")
@@ -176,13 +164,7 @@ def clean_dataset(file_path: str, options: dict) -> dict:
                 f"Filled missing categorical values in {len(filled_cat_cols)} columns using 'Unknown' strategy"
             )
 
-    path = Path(file_path)
-    if path.suffix == ".csv":
-        df.to_csv(
-            file_path, index=False
-        )  # index=False prevents pandas from writing the row index as an extra column
-    else:
-        df.to_excel(file_path, index=False)
+    save_dataframe(df, file_path)
 
     return {
         "original_rows": original_rows,

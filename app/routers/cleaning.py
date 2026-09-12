@@ -34,8 +34,6 @@ def quality_report(
     dataset = db.query(Dataset).filter(Dataset.id == dataset_id).first()
     if not dataset:
         raise HTTPException(status_code=404, detail="Dataset not found")
-    print(f"DEBUG dataset.user_id={dataset.user_id!r} type={type(dataset.user_id)}")
-    print(f"DEBUG current_user.id={current_user.id!r} type={type(current_user.id)}")
     if dataset.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Access denied")
     try:
@@ -61,17 +59,10 @@ def clean_dataset_endpoint(
     dataset = db.query(Dataset).filter(Dataset.id == dataset_id).first()
     if not dataset:
         raise HTTPException(status_code=404, detail="Dataset not found")
-    print(f"DEBUG dataset.user_id={dataset.user_id!r} type={type(dataset.user_id)}")
-    print(f"DEBUG current_user.id={current_user.id!r} type={type(current_user.id)}")
     if dataset.user_id != current_user.id:
-            raise HTTPException(status_code=403, detail="Access denied")
+        raise HTTPException(status_code=403, detail="Access denied")
     try:
         result = clean_dataset(dataset.file_path, options.model_dump())
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error cleaning dataset: {str(e)}")
-    return {
-        "dataset_id": dataset_id,
-        "dataset_name": dataset.filename,
-        **result,
-    }

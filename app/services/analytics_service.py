@@ -1,19 +1,7 @@
-from functools import total_ordering
-from tomllib import load
-
 import pandas as pd
 import numpy as np
-from pathlib import Path
 
-from pandas.core.interchange.from_dataframe import categorical_column_to_series
-
-def load_dataframe(file_path: str) -> pd.DataFrame:
-    path = Path(file_path)
-    if path.suffix == '.csv':
-        return pd.read_csv(path)
-    elif path.suffix in [".xlsx", ".xls"]:
-        return pd.read_excel(path)
-    raise ValueError(f"Unsupported file type: {path.suffix}")
+from app.services.storage_service import load_dataframe
 
 def generate_insights(file_path: str) -> dict:
     df =load_dataframe(file_path)

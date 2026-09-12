@@ -1,25 +1,17 @@
-import io                          # NEW — needed to convert bytes to file-like object for pandas
-import os               # REMOVED — no longer writing to local disk
-from app.models.user import User
-from app.services.auth_service import get_current_user
-from app.services.s3_service import (    # NEW — import S3 functions
-    upload_file_to_s3,
-    download_file_from_s3,
-    generate_presigned_url,
-    get_s3_key,
-)
+import io
+import traceback
+
 import pandas as pd
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session
+
 from app.database import get_db
 from app.models.dataset import Dataset
-
-import traceback
+from app.models.user import User
+from app.services.auth_service import get_current_user
+from app.services.storage_service import get_storage_backend, get_storage_key
 
 router = APIRouter()
-
-UPLOAD_FOLDER = "app/uploads"
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 
 @router.post("/upload")
@@ -28,20 +20,15 @@ async def upload_dataset(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    # CHANGED — read file into memory as bytes instead of writing to disk
     file_bytes = await file.read()
+    storage_key = get_storage_key(current_user.id, file.filename)
 
-    # NEW — generate S3 key: uploads/{user_id}/{filename}
-    s3_key = get_s3_key(current_user.id, file.filename)
-
-    # NEW — upload bytes to S3
     try:
-        upload_file_to_s3(file_bytes, s3_key)
+        get_storage_backend().save(file_bytes, storage_key)
     except Exception as e:
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Failed to upload to S3: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to store file: {str(e)}")
 
-    # CHANGED — parse from bytes instead of from disk file
     try:
         df = pd.read_csv(io.BytesIO(file_bytes))
     except Exception as e:
@@ -50,7 +37,7 @@ async def upload_dataset(
     new_dataset = Dataset(
         user_id=current_user.id,
         filename=file.filename,
-        file_path=s3_key,          # CHANGED — store S3 key instead of local path
+        file_path=storage_key,
         row_count=len(df),
         column_count=len(df.columns),
     )
@@ -59,22 +46,24 @@ async def upload_dataset(
     db.refresh(new_dataset)
 
     return {
-        "message": "File uploaded successfully to S3",
+        "message": "File uploaded successfully",
         "dataset": {
             "id": new_dataset.id,
             "filename": new_dataset.filename,
             "rows": new_dataset.row_count,
             "columns": new_dataset.column_count,
-            "s3_key": s3_key,      # NEW — return s3 key in response
+            "storage_key": storage_key,
             "uploaded_at": new_dataset.created_at,
         }
     }
 
 
 @router.get("/datasets/")
-def list_datasets(db: Session = Depends(get_db)):
-    # UNCHANGED
-    datasets = db.query(Dataset).all()
+def list_datasets(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    datasets = db.query(Dataset).filter(Dataset.user_id == current_user.id).all()
     return {
         "datasets": [
             {
@@ -93,16 +82,20 @@ def list_datasets(db: Session = Depends(get_db)):
 def get_dataset_summary(
     dataset_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),  # NEW — added auth
+    current_user: User = Depends(get_current_user),
 ):
     dataset = db.query(Dataset).filter(Dataset.id == dataset_id).first()
     if not dataset:
         raise HTTPException(status_code=404, detail="Dataset not found")
 
-    # CHANGED — download from S3 instead of reading from disk
+    if dataset.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Access denied")
+
     try:
-        file_bytes = download_file_from_s3(dataset.file_path)
+        file_bytes = get_storage_backend().load(dataset.file_path)
         df = pd.read_csv(io.BytesIO(file_bytes))
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Dataset file not found in storage")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Could not read dataset: {str(e)}")
 
@@ -117,7 +110,6 @@ def get_dataset_summary(
     }
 
 
-# NEW ENDPOINT — generate presigned download URL
 @router.get("/datasets/{dataset_id}/download")
 def get_download_url(
     dataset_id: int,
@@ -132,9 +124,18 @@ def get_download_url(
         raise HTTPException(status_code=403, detail="Access denied")
 
     try:
-        url = generate_presigned_url(dataset.file_path, expires_in=3600)
+        url = get_storage_backend().url_for(dataset.file_path, expires_in=3600)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Could not generate download URL: {str(e)}")
+
+    if url is None:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Direct download links aren't available on the local storage "
+                "backend. Use GET /datasets/{id}/summary to read the file instead."
+            ),
+        )
 
     return {
         "download_url": url,

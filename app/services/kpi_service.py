@@ -2,7 +2,6 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from sqlalchemy.schema import PrimaryKeyConstraint
 
 
 def compute_kpis(df: pd.DataFrame) -> dict[str, Any]:
@@ -12,11 +11,10 @@ def compute_kpis(df: pd.DataFrame) -> dict[str, Any]:
     kpis["total_records"] = int(df.shape[0])
     kpis["total_columns"] = int(df.shape[1])
     kpis["missing_cells"] = missing_cells
-    kpis["data_completeness+pct"] = (
-        round((total_cells - missing_cells) / total_cells * 100)
+    kpis["data_completeness_pct"] = (
+        round((total_cells - missing_cells) / total_cells * 100, 2)
         if total_cells > 0
-        else 0.0,
-        2,
+        else 0.0
     )
     kpis["duplicate_records"] = int(df.duplicated().sum())
 
@@ -38,7 +36,7 @@ def compute_kpis(df: pd.DataFrame) -> dict[str, Any]:
             kpis["coeff_of_variation"] = round(float(series.std() / series.mean()), 4)
 
         q75 =float(series.quantile(0.75))
-        kpis["high_value_record"] =  int((series >= q75).sum())
+        kpis["high_value_records"] =  int((series >= q75).sum())
         kpis["high_value_threshold"] = round(q75, 2)
 
     date_cols = df.select_dtypes(include=["datetime64[ns]", "datetime64[ns, UTC]"]).columns.tolist()
@@ -60,8 +58,8 @@ def compute_kpis(df: pd.DataFrame) -> dict[str, Any]:
         data_series=pd.to_datetime(df[primary_date_col], errors="coerce").dropna()
 
         kpis["date_column"] = primary_date_col
-        kpis["date_range"] = str(data_series.min().date())
-        kpis["data_range_end"] = str(data_series.max().date())
+        kpis["date_range_start"] = str(data_series.min().date())
+        kpis["date_range_end"] = str(data_series.max().date())
         kpis["reporting_period_days"] = int((data_series.max() - data_series.min()).days)
 
         if numeric_cols and "primary_metric_column" in kpis:
@@ -75,7 +73,7 @@ def compute_kpis(df: pd.DataFrame) -> dict[str, Any]:
                     last=float(monthly.iloc[-1])
                     prev=float(monthly.iloc[-2])
                     if prev != 0:
-                        kpis["monthly_growth_pct"] = round(((last - prev) / prev) * 100, 2)
+                        kpis["mom_growth_pct"] = round(((last - prev) / prev) * 100, 2)
                     
             except Exception:
                 pass
@@ -84,6 +82,6 @@ def compute_kpis(df: pd.DataFrame) -> dict[str, Any]:
         segment_cols = [col for col in categorical_cols if 2 < df[col].nunique() < 50]
         if segment_cols:
             top_segment_col = segment_cols[0]
-            kpis["primary_segment_col"] = top_segment_col
+            kpis["primary_segment_column"] = top_segment_col
             kpis["segment_count"] = int(df[top_segment_col].nunique())
     return kpis
