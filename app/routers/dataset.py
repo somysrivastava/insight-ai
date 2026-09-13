@@ -1,27 +1,107 @@
 import io
 import traceback
+from pathlib import Path
+from typing import Optional
 
 import pandas as pd
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models.dataset import Dataset
-from app.models.user import User
+from app.models import Dataset, User
+from app.models.workspace_member import WorkspaceMember
+from app.services.access_control import require_dataset_access, require_workspace_access
 from app.services.auth_service import get_current_user
 from app.services.storage_service import get_storage_backend, get_storage_key
 
 router = APIRouter()
 
 
+def _sanitize_for_key(name: str) -> str:
+    """Keeps sheet/file names from introducing path separators into a storage key."""
+    return name.strip().replace("/", "_").replace("\\", "_")
+
+
 @router.post("/upload")
 async def upload_dataset(
     file: UploadFile = File(...),
+    workspace_id: Optional[int] = Form(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
+    """
+    Uploads a CSV or Excel file. A multi-sheet .xlsx creates one Dataset
+    row per sheet, each independently queryable — every existing service
+    (analytics/cleaning/reports/ai) already handles .csv without changes,
+    so each sheet is normalized to .csv in storage regardless of the
+    original upload format.
+
+    workspace_id is optional and defaults to the caller's own workspace
+    — the only real option today since every user has exactly one
+    (Day 16). Becomes a meaningful choice once a user can belong to more
+    than one workspace.
+    """
     file_bytes = await file.read()
-    storage_key = get_storage_key(current_user.id, file.filename)
+    resolved_workspace_id = require_workspace_access(db, current_user.id, workspace_id)
+
+    if file.filename.lower().endswith((".xlsx", ".xls")):
+        try:
+            sheets = pd.read_excel(io.BytesIO(file_bytes), sheet_name=None)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Invalid Excel file: {str(e)}")
+
+        if not sheets:
+            raise HTTPException(status_code=400, detail="Excel file has no sheets.")
+
+        base_name = Path(file.filename).stem
+        backend = get_storage_backend()
+        created = []
+
+        for sheet_name, df in sheets.items():
+            storage_key = get_storage_key(
+                resolved_workspace_id, f"{_sanitize_for_key(base_name)}__{_sanitize_for_key(sheet_name)}.csv"
+            )
+            try:
+                backend.save(df.to_csv(index=False).encode("utf-8"), storage_key)
+            except Exception as e:
+                traceback.print_exc()
+                raise HTTPException(
+                    status_code=500, detail=f"Failed to store sheet '{sheet_name}': {str(e)}"
+                )
+
+            new_dataset = Dataset(
+                user_id=current_user.id,
+                workspace_id=resolved_workspace_id,
+                filename=file.filename,
+                sheet_name=sheet_name,
+                file_path=storage_key,
+                row_count=len(df),
+                column_count=len(df.columns),
+            )
+            db.add(new_dataset)
+            created.append(new_dataset)
+
+        db.commit()
+        for d in created:
+            db.refresh(d)
+
+        return {
+            "message": f"Excel file uploaded successfully — {len(created)} sheet(s) created as separate datasets",
+            "datasets": [
+                {
+                    "id": d.id,
+                    "filename": d.filename,
+                    "sheet_name": d.sheet_name,
+                    "rows": d.row_count,
+                    "columns": d.column_count,
+                    "workspace_id": d.workspace_id,
+                    "uploaded_at": d.created_at,
+                }
+                for d in created
+            ],
+        }
+
+    storage_key = get_storage_key(resolved_workspace_id, file.filename)
 
     try:
         get_storage_backend().save(file_bytes, storage_key)
@@ -36,6 +116,7 @@ async def upload_dataset(
 
     new_dataset = Dataset(
         user_id=current_user.id,
+        workspace_id=resolved_workspace_id,
         filename=file.filename,
         file_path=storage_key,
         row_count=len(df),
@@ -52,6 +133,7 @@ async def upload_dataset(
             "filename": new_dataset.filename,
             "rows": new_dataset.row_count,
             "columns": new_dataset.column_count,
+            "workspace_id": new_dataset.workspace_id,
             "storage_key": storage_key,
             "uploaded_at": new_dataset.created_at,
         }
@@ -63,14 +145,22 @@ def list_datasets(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    datasets = db.query(Dataset).filter(Dataset.user_id == current_user.id).all()
+    """Lists datasets across every workspace the current user belongs to, not just their own uploads."""
+    datasets = (
+        db.query(Dataset)
+        .join(WorkspaceMember, WorkspaceMember.workspace_id == Dataset.workspace_id)
+        .filter(WorkspaceMember.user_id == current_user.id)
+        .all()
+    )
     return {
         "datasets": [
             {
                 "id": d.id,
                 "filename": d.filename,
+                "sheet_name": d.sheet_name,
                 "rows": d.row_count,
                 "columns": d.column_count,
+                "workspace_id": d.workspace_id,
                 "uploaded_at": d.created_at,
             }
             for d in datasets
@@ -84,12 +174,7 @@ def get_dataset_summary(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    dataset = db.query(Dataset).filter(Dataset.id == dataset_id).first()
-    if not dataset:
-        raise HTTPException(status_code=404, detail="Dataset not found")
-
-    if dataset.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Access denied")
+    dataset = require_dataset_access(db, dataset_id, current_user.id)
 
     try:
         file_bytes = get_storage_backend().load(dataset.file_path)
@@ -102,6 +187,7 @@ def get_dataset_summary(
     return {
         "id": dataset.id,
         "filename": dataset.filename,
+        "sheet_name": dataset.sheet_name,
         "rows": len(df),
         "columns": len(df.columns),
         "column_name": list(df.columns),
@@ -116,12 +202,7 @@ def get_download_url(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    dataset = db.query(Dataset).filter(Dataset.id == dataset_id).first()
-    if not dataset:
-        raise HTTPException(status_code=404, detail="Dataset not found")
-
-    if dataset.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Access denied")
+    dataset = require_dataset_access(db, dataset_id, current_user.id)
 
     try:
         url = get_storage_backend().url_for(dataset.file_path, expires_in=3600)

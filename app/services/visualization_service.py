@@ -13,7 +13,7 @@ from plotly.subplots import make_subplots
 from sqlalchemy.orm import Session
 from fastapi import HTTPException
 
-from app.models.dataset import Dataset
+from app.services.access_control import require_dataset_access
 from app.services.storage_service import load_dataframe
 from app.schemas.visualization import (
     BarChartRequest,
@@ -52,14 +52,7 @@ def _load_dataset(dataset_id: int, user_id: int, db: Session) -> pd.DataFrame:
     Extract it once. The actual storage read lives in storage_service.py,
     so a future storage change is a config change, not an edit here.
     """
-    # Auth check: ensure this dataset belongs to the requesting user
-    dataset = db.query(Dataset).filter(
-        Dataset.id == dataset_id,
-        Dataset.user_id == user_id
-    ).first()
-
-    if not dataset:
-        raise HTTPException(status_code=404, detail="Dataset not found")
+    dataset = require_dataset_access(db, dataset_id, user_id)
 
     try:
         df = load_dataframe(dataset.file_path)

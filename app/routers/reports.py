@@ -18,7 +18,8 @@ WHY THREE SEPARATE ENDPOINTS?
 AUTHENTICATION:
     All endpoints are protected with JWT (from Day 6).
     The current_user dependency injects the logged-in user.
-    Dataset ownership is validated — you can only report on YOUR datasets.
+    Workspace access is validated (Day 16) — you can only report on
+    datasets in a workspace you belong to.
 """
 
 import pandas as pd
@@ -29,6 +30,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.dataset import Dataset               # your SQLAlchemy Dataset model
 from app.models.user import User                     # your SQLAlchemy User model
+from app.services.access_control import require_dataset_access
 from app.services.auth_service import get_current_user   # your JWT dependency
 from app.services.storage_service import load_dataframe
 from app.services.report_service import generate_full_report, generate_executive_summary
@@ -59,20 +61,7 @@ def _load_dataset_df(
             3. Read CSV into DataFrame
         DRY principle — define once, call three times.
     """
-    dataset = db.query(Dataset).filter(Dataset.id == dataset_id).first()
-
-    if not dataset:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Dataset {dataset_id} not found.",
-        )
-
-    # Ownership check — users should only see their own data
-    if dataset.user_id != current_user.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You do not have access to this dataset.",
-        )
+    dataset = require_dataset_access(db, dataset_id, current_user.id)
 
     try:
         df = load_dataframe(dataset.file_path)

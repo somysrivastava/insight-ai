@@ -4,34 +4,59 @@ x-app-env: &app-env
   environment:
     # Overrides whatever DATABASE_URL/REDIS_URL are in .env — inside this
     # network "localhost" doesn't reach the db/redis containers. Shared
-    # between app and celery below via this anchor so both always agree
-    # — one source of truth, not two values that can drift apart.
+    # between app, celery, and migrate below via this anchor so they
+    # always agree — one source of truth, not several values that can
+    # drift apart.
     DATABASE_URL: postgresql://${POSTGRES_USER:-insightai}:${POSTGRES_PASSWORD:-insightai}@db:5432/${POSTGRES_DB:-insightai_dev}
     REDIS_URL: redis://redis:6379/0
   volumes:
     # Bind-mounts the whole project so code edits hot-reload without a
-    # rebuild (app) or take effect on the next task pickup (celery).
-    # app/uploads/ (LocalStorageBackend's target) lands on the host
-    # filesystem as a side effect — no separate volume needed, and it's
-    # visible identically to both containers.
+    # rebuild (app), take effect on the next task pickup (celery), or
+    # are picked up by the next migration run without a rebuild
+    # (migrate). app/uploads/ (LocalStorageBackend's target) lands on
+    # the host filesystem as a side effect — no separate volume needed.
     - .:/app
-  depends_on:
-    db:
-      condition: service_healthy
-    redis:
-      condition: service_healthy
 
 services:
+  migrate:
+    # Runs once, applies pending Alembic migrations, then exits. app and
+    # celery both wait for this to succeed before starting — running
+    # `alembic upgrade head` from two containers at once (if app and
+    # celery each migrated themselves) risks both racing to apply the
+    # same DDL concurrently. One dedicated step, gated by
+    # service_completed_successfully, avoids that entirely.
+    build: .
+    command: alembic upgrade head
+    <<: *app-env
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
   app:
     build: .
     ports:
       - "8000:8000"
     <<: *app-env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
   celery:
     build: .
     command: celery -A app.worker worker --loglevel=info
     <<: *app-env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
   db:
     image: postgres:16-alpine

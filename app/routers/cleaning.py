@@ -7,7 +7,8 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Dataset, User
+from app.models import User
+from app.services.access_control import require_dataset_access
 from app.services.auth_service import get_current_user
 from app.services.cleaning_service import clean_dataset, generate_quality_report
 
@@ -31,11 +32,7 @@ def quality_report(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    dataset = db.query(Dataset).filter(Dataset.id == dataset_id).first()
-    if not dataset:
-        raise HTTPException(status_code=404, detail="Dataset not found")
-    if dataset.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Access denied")
+    dataset = require_dataset_access(db, dataset_id, current_user.id)
     try:
         report = generate_quality_report(dataset.file_path)
     except Exception as e:
@@ -56,11 +53,7 @@ def clean_dataset_endpoint(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    dataset = db.query(Dataset).filter(Dataset.id == dataset_id).first()
-    if not dataset:
-        raise HTTPException(status_code=404, detail="Dataset not found")
-    if dataset.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Access denied")
+    dataset = require_dataset_access(db, dataset_id, current_user.id)
     try:
         result = clean_dataset(dataset.file_path, options.model_dump())
         return result

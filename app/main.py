@@ -2,7 +2,6 @@
 from fastapi import FastAPI
 
 import app.models
-from app.database import Base, engine
 from app.routers import dataset, auth
 from app.routers.cleaning import router as cleaning_router
 from app.routers.analytics import router as analytics_router
@@ -11,6 +10,7 @@ from app.routers import visualization
 from app.routers import reports
 from app.routers import ai
 from app.routers import jobs
+from app.routers import workspaces
 
 app = FastAPI(
     title="Insight AI",
@@ -18,10 +18,12 @@ app = FastAPI(
     version="1.0.0",
 )
 
-Base.metadata.create_all(bind=engine)
-# create_all() looks at all classes that inherit from Base
-# and creates their tables in PostgreSQL if they don't already exist
-# This runs every time the server starts — safe to run multiple times
+# Schema is managed by Alembic (Day 16), not create_all() — this project
+# now has real foreign-key/data-migration needs that create_all() can't
+# express (it only ever creates missing tables, never alters existing
+# ones or backfills data). Run `alembic upgrade head` before starting
+# the app. In Docker Compose, the `migrate` service does this
+# automatically before `app`/`celery` start.
 
 
 @app.get("/")
@@ -47,3 +49,4 @@ app.include_router(reports.router)
 app.include_router(visualization.router)
 app.include_router(ai.router)
 app.include_router(jobs.router)
+app.include_router(workspaces.router)

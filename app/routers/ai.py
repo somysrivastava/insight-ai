@@ -2,10 +2,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Dataset, User
+from app.models import User
 from app.schemas.ai import QueryRequest, QueryResponse
 from app.schemas.jobs import JobSubmitResponse
 from app.services import ai_service
+from app.services.access_control import require_dataset_access
 from app.services.auth_service import get_current_user
 from app.services.job_service import record_job_owner
 from app.tasks.ai_tasks import run_query_task
@@ -20,11 +21,7 @@ def query_dataset(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    dataset = db.query(Dataset).filter(Dataset.id == dataset_id).first()
-    if not dataset:
-        raise HTTPException(status_code=404, detail="Dataset not found")
-    if dataset.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Access denied")
+    dataset = require_dataset_access(db, dataset_id, current_user.id)
 
     try:
         result = ai_service.answer_query(dataset, request.question)
@@ -51,11 +48,7 @@ def query_dataset_async(
     GET /jobs/{task_id}. The synchronous endpoint above is untouched —
     this is additive, not a replacement.
     """
-    dataset = db.query(Dataset).filter(Dataset.id == dataset_id).first()
-    if not dataset:
-        raise HTTPException(status_code=404, detail="Dataset not found")
-    if dataset.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Access denied")
+    require_dataset_access(db, dataset_id, current_user.id)
 
     task = run_query_task.delay(dataset_id, current_user.id, request.question)
     record_job_owner(task.id, current_user.id)

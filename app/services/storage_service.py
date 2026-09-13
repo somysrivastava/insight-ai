@@ -80,8 +80,15 @@ def get_storage_backend() -> StorageBackend:
     return LocalStorageBackend()
 
 
-def get_storage_key(user_id, filename: str) -> str:
-    return f"{user_id}/{filename}"
+def get_storage_key(scope_id, filename: str) -> str:
+    """
+    `scope_id` groups stored files by sharing boundary. Since Day 16,
+    that's a workspace_id (everyone in a workspace can access its
+    files) — earlier callers passed a user_id; either works identically
+    here, this function just joins whatever id it's given with the
+    filename.
+    """
+    return f"{scope_id}/{filename}"
 
 
 def load_dataframe(file_path: str, backend: Optional[StorageBackend] = None) -> pd.DataFrame:
