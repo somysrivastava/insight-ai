@@ -47,6 +47,7 @@ QUERY_SCHEMA = {
         "metric": {"type": ["string", "null"]},
         "aggregate": {"type": "string", "enum": ["sum", "mean", "count", "max", "min"]},
         "filter_value": {"type": ["string", "null"]},
+        "filter_operator": {"type": "string", "enum": ["eq", "gt", "gte", "lt", "lte"]},
         "limit": {"type": "integer"},
         "direction": {"type": "string", "enum": ["asc", "desc"]},
         "explanation": {"type": "string"},
@@ -57,6 +58,7 @@ QUERY_SCHEMA = {
         "metric",
         "aggregate",
         "filter_value",
+        "filter_operator",
         "limit",
         "direction",
         "explanation",
@@ -84,11 +86,17 @@ numeric column to aggregate with "aggregate"). Use this — not "sort" — \
 whenever the question asks to rank or compare *categories* by a value \
 (e.g. "top 3 regions by revenue" groups by region and sums revenue; it is \
 not a row-level sort).
-  - "filter": "column" and "filter_value". If the question also asks for a \
+  - "filter": "column" and "filter_value". Set "filter_operator" to \
+match the comparison the question describes — "eq" for "is"/"equals"/a \
+named category (e.g. "from Europe"), "gt"/"gte"/"lt"/"lte" for \
+"above"/"at least"/"below"/"at most" a numeric threshold (e.g. "orders \
+above 500" is filter_operator "gt", filter_value "500", column the \
+numeric field being thresholded). If the question also asks for a \
 computed number among the matches (e.g. "total revenue from Europe", "how \
-many orders from Europe") rather than just "show me the matching rows", \
-also set "metric" (numeric column, or the column itself for a plain count) \
-and "aggregate" accordingly.
+many orders from Europe", "average delivery time for orders above 500") \
+rather than just "show me the matching rows", also set "metric" (numeric \
+column, or the column itself for a plain count) and "aggregate" \
+accordingly.
   - "sort": "metric" (or "column" if no numeric field is being ranked) — \
 the field individual *rows* are ranked by. Use this only for row-level \
 ranking, not for ranking categories/groups (use "groupby" for that).
@@ -103,7 +111,8 @@ validated separately against the real data after you respond.
 - Every field must still be present even when an operation doesn't use it. \
 Use JSON null for an unused "column", "metric", or "filter_value" — never \
 the placeholder text "null", "none", or an empty string. Use "sum" as the \
-harmless placeholder for an unused "aggregate".
+harmless placeholder for an unused "aggregate", and "eq" as the harmless \
+placeholder for an unused "filter_operator".
 - "limit" defaults to 10 unless the question specifies a different number.
 - "direction" defaults to "desc" ("top", "highest", "most") unless the \
 question asks for the lowest/smallest/bottom values, in which case use \
@@ -147,9 +156,12 @@ def _format_answer(query: dict, result: dict) -> str:
         if "value" in result:
             value = result["value"]
             formatted_value = f"{value:,}" if result["aggregate"] == "count" else f"{value:,.2f}"
+            symbol = {"eq": "=", "gt": ">", "gte": ">=", "lt": "<", "lte": "<="}.get(
+                result.get("filter_operator", "eq"), "="
+            )
             body = (
                 f"{result['aggregate']} of {result['metric']} where "
-                f"{result['column']} = {result['filter_value']}: {formatted_value} "
+                f"{result['column']} {symbol} {result['filter_value']}: {formatted_value} "
                 f"(across {result['row_count']:,} matching records)."
             )
         else:
@@ -162,8 +174,9 @@ def _format_answer(query: dict, result: dict) -> str:
 
     elif operation == "aggregate":
         value = result["value"]
+        formatted_value = f"{int(value):,}" if query["aggregate"] == "count" else f"{value:,.2f}"
         body = (
-            f"{query['aggregate']} of {query['metric']}: {value:,.2f} "
+            f"{query['aggregate']} of {query['metric']}: {formatted_value} "
             f"(across {result['row_count']:,} records)."
         )
 
@@ -187,6 +200,17 @@ def _format_answer(query: dict, result: dict) -> str:
 
 def answer_query(dataset, question: str) -> dict:
     df = load_dataframe(dataset.file_path)
+    return answer_query_for_df(df, question)
+
+
+def answer_query_for_df(df: pd.DataFrame, question: str) -> dict:
+    """
+    Same pipeline as answer_query(), operating directly on an in-memory
+    DataFrame rather than loading one from a Dataset row's storage. Used
+    by the joins feature (Day 17) to run a question against an
+    already-joined result — the model never sees or performs the join
+    itself, only this already-computed DataFrame.
+    """
     context = _build_dataset_context(df)
 
     client = _get_client()

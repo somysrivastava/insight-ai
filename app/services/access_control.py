@@ -87,3 +87,28 @@ def require_workspace_access(db: Session, user_id: int, requested_workspace_id: 
         raise HTTPException(status_code=404, detail=str(e))
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
+
+
+def check_workspace_membership(db: Session, workspace_id: int, user_id: int) -> None:
+    """
+    Verifies a user is a member of a specific workspace, independent of
+    any dataset — needed for objects scoped to a workspace as a whole
+    rather than to one dataset (e.g. a saved join's metadata, Day 17).
+    Raises PermissionError if not a member.
+    """
+    is_member = (
+        db.query(WorkspaceMember)
+        .filter(WorkspaceMember.workspace_id == workspace_id, WorkspaceMember.user_id == user_id)
+        .first()
+        is not None
+    )
+    if not is_member:
+        raise PermissionError("Access denied.")
+
+
+def require_workspace_membership(db: Session, workspace_id: int, user_id: int) -> None:
+    """FastAPI-facing wrapper: same check, translated to HTTP status codes."""
+    try:
+        check_workspace_membership(db, workspace_id, user_id)
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))

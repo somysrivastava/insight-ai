@@ -201,6 +201,7 @@ def execute_structured_query(df: pd.DataFrame, query: dict) -> dict:
     metric = _normalize(query.get("metric"))
     aggregate = _normalize(query.get("aggregate")) or "sum"
     filter_value = _normalize(query.get("filter_value"))
+    filter_operator = _normalize(query.get("filter_operator")) or "eq"
     limit = query.get("limit") or 10
     ascending = query.get("direction") == "asc"
 
@@ -230,9 +231,28 @@ def execute_structured_query(df: pd.DataFrame, query: dict) -> dict:
         if filter_value is None:
             raise ValueError("filter requires 'filter_value'")
 
-        mask = df[column].astype(str).str.strip().str.lower() == str(filter_value).strip().lower()
+        if filter_operator == "eq":
+            mask = df[column].astype(str).str.strip().str.lower() == str(filter_value).strip().lower()
+        else:
+            try:
+                threshold = float(filter_value)
+            except (TypeError, ValueError):
+                raise ValueError(
+                    f"filter_operator '{filter_operator}' requires a numeric filter_value, got '{filter_value}'."
+                )
+            numeric_col = pd.to_numeric(df[column], errors="coerce")
+            comparisons = {
+                "gt": numeric_col > threshold,
+                "gte": numeric_col >= threshold,
+                "lt": numeric_col < threshold,
+                "lte": numeric_col <= threshold,
+            }
+            if filter_operator not in comparisons:
+                raise ValueError(f"Unsupported filter_operator '{filter_operator}'.")
+            mask = comparisons[filter_operator]
+
         if not mask.any():
-            raise ValueError(f"Value '{filter_value}' not found in column '{column}'.")
+            raise ValueError(f"No rows match {column} {filter_operator} {filter_value}.")
 
         filtered = df[mask]
 
@@ -247,6 +267,7 @@ def execute_structured_query(df: pd.DataFrame, query: dict) -> dict:
                 "operation": operation,
                 "column": column,
                 "filter_value": filter_value,
+                "filter_operator": filter_operator,
                 "metric": metric,
                 "aggregate": aggregate,
                 "value": value,
