@@ -32,10 +32,14 @@ from app.models.dataset import Dataset               # your SQLAlchemy Dataset m
 from app.models.user import User                     # your SQLAlchemy User model
 from app.services.access_control import require_dataset_access
 from app.services.auth_service import get_current_user   # your JWT dependency
+from app.services.job_service import record_job_owner
 from app.services.storage_service import load_dataframe
 from app.services.report_service import generate_full_report, generate_executive_summary
 from app.services.kpi_service import compute_kpis
+from app.schemas.export import ReportExportRequest
+from app.schemas.jobs import JobSubmitResponse
 from app.schemas.report import KPIReport, ExecutiveSummary, FullReport
+from app.tasks.export_tasks import export_report_task
 
 router = APIRouter(prefix="/report", tags=["Reporting"])
 
@@ -181,3 +185,18 @@ def get_full_report(
     report = generate_full_report(dataset.id, dataset.filename, df)
 
     return report
+
+
+@router.post("/{dataset_id}/export", response_model=JobSubmitResponse, status_code=202)
+def export_report(
+    dataset_id: int,
+    request: ReportExportRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Exports the full KPI report as CSV/Excel/PDF. Async only — poll GET /jobs/{task_id}, then GET /exports/{export_id}."""
+    require_dataset_access(db, dataset_id, current_user.id)
+
+    task = export_report_task.delay(dataset_id, current_user.id, request.format)
+    record_job_owner(task.id, current_user.id)
+    return JobSubmitResponse(task_id=task.id)

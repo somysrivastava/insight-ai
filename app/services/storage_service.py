@@ -63,21 +63,34 @@ class S3StorageBackend(StorageBackend):
     """Thin adapter over s3_service.py — kept in the codebase but inactive
     unless STORAGE_BACKEND=s3 is set. See ADR-004."""
 
+    def __init__(self, prefix: str = ""):
+        self.prefix = prefix
+
+    def _key(self, key: str) -> str:
+        return f"{self.prefix}/{key}" if self.prefix else key
+
     def save(self, file_bytes: bytes, key: str) -> str:
-        return s3_service.upload_file_to_s3(file_bytes, key)
+        return s3_service.upload_file_to_s3(file_bytes, self._key(key))
 
     def load(self, key: str) -> bytes:
-        return s3_service.download_file_from_s3(key)
+        return s3_service.download_file_from_s3(self._key(key))
 
     def url_for(self, key: str, expires_in: int = 3600) -> Optional[str]:
-        return s3_service.generate_presigned_url(key, expires_in)
+        return s3_service.generate_presigned_url(self._key(key), expires_in)
 
 
-def get_storage_backend() -> StorageBackend:
+def get_storage_backend(purpose: str = "uploads") -> StorageBackend:
+    """
+    `purpose` picks which local directory / S3 key prefix this backend
+    reads and writes under — e.g. "uploads" (default, dataset files) vs
+    "exports" (Day 18, generated CSV/Excel/PDF files). Swapping the
+    active backend, or adding a new purpose, is a change here, not in
+    every caller.
+    """
     backend = os.getenv("STORAGE_BACKEND", "local").lower()
     if backend == "s3":
-        return S3StorageBackend()
-    return LocalStorageBackend()
+        return S3StorageBackend(prefix=purpose)
+    return LocalStorageBackend(root=f"app/{purpose}")
 
 
 def get_storage_key(scope_id, filename: str) -> str:

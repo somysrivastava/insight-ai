@@ -10,9 +10,13 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import Dataset, User
 from app.models.workspace_member import WorkspaceMember
+from app.schemas.export import DatasetExportRequest
+from app.schemas.jobs import JobSubmitResponse
 from app.services.access_control import require_dataset_access, require_workspace_access
 from app.services.auth_service import get_current_user
+from app.services.job_service import record_job_owner
 from app.services.storage_service import get_storage_backend, get_storage_key
+from app.tasks.export_tasks import export_dataset_task
 
 router = APIRouter()
 
@@ -223,3 +227,25 @@ def get_download_url(
         "expires_in_seconds": 3600,
         "filename": dataset.filename,
     }
+
+
+@router.post("/datasets/{dataset_id}/export", response_model=JobSubmitResponse, status_code=202)
+def export_dataset(
+    dataset_id: int,
+    request: DatasetExportRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Exports a query result (source="query"), or an analytics result
+    (source="insights"|"trends"|"breakdown") as CSV/Excel/PDF. Async
+    only — poll GET /jobs/{task_id}, then GET /exports/{export_id} from
+    its result once it succeeds.
+    """
+    require_dataset_access(db, dataset_id, current_user.id)
+
+    task = export_dataset_task.delay(
+        dataset_id, current_user.id, request.source, request.format, request.question, request.group_by
+    )
+    record_job_owner(task.id, current_user.id)
+    return JobSubmitResponse(task_id=task.id)

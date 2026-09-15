@@ -7,6 +7,8 @@ venv/
 .DS_Store
 # Uploaded datasets
 uploads/
+# Exported files (Day 18)
+exports/
 # IDE
 .vscode/
 .idea/

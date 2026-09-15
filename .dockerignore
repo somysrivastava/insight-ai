@@ -15,6 +15,7 @@ docs/
 insightai-key.pem
 local_backup.sql
 
-# Uploaded datasets — present via bind mount at runtime, not needed in
-# the build context
+# Uploaded datasets / exported files — present via bind mount at
+# runtime, not needed in the build context
 app/uploads/*
+app/exports/*

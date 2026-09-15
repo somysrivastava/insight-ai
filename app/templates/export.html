@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  @page {
+    size: A4;
+    margin: 2.2cm 1.8cm;
+    @bottom-center {
+      content: "InsightAI — generated {{ generated_at }}";
+      font-family: Arial, sans-serif;
+      font-size: 8pt;
+      color: #9CA3AF;
+    }
+  }
+  body {
+    font-family: Arial, sans-serif;
+    color: {{ text_color }};
+    font-size: 10.5pt;
+    line-height: 1.5;
+  }
+  .brand {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    border-bottom: 3px solid {{ primary_color }};
+    padding-bottom: 10px;
+    margin-bottom: 22px;
+  }
+  .brand-name {
+    font-size: 15pt;
+    font-weight: bold;
+    color: {{ primary_color }};
+    letter-spacing: 0.5px;
+  }
+  .brand-tag {
+    font-size: 8.5pt;
+    color: #9CA3AF;
+  }
+  h1 {
+    font-size: 18pt;
+    margin: 0 0 4px 0;
+    color: {{ text_color }};
+  }
+  .answer {
+    background: #F5F3FF;
+    border-left: 4px solid {{ secondary_color }};
+    padding: 12px 16px;
+    margin: 16px 0;
+    font-size: 11pt;
+  }
+  h2 {
+    font-size: 12.5pt;
+    color: {{ primary_color }};
+    margin: 24px 0 8px 0;
+    border-bottom: 1px solid #E5E7EB;
+    padding-bottom: 4px;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 6px;
+    font-size: 9.5pt;
+  }
+  th {
+    background: {{ primary_color }};
+    color: white;
+    text-align: left;
+    padding: 7px 10px;
+  }
+  td {
+    padding: 6px 10px;
+    border-bottom: 1px solid #E5E7EB;
+  }
+  tr {
+    page-break-inside: avoid;
+  }
+  h2 {
+    page-break-after: avoid;
+  }
+  tr:nth-child(even) td {
+    background: #FAFAFA;
+  }
+  .summary-list {
+    list-style: none;
+    padding: 0;
+    margin: 6px 0;
+  }
+  .summary-list li {
+    padding: 5px 0;
+    border-bottom: 1px solid #F0F0F0;
+    display: flex;
+    justify-content: space-between;
+  }
+  .summary-list .field {
+    color: #6B7280;
+  }
+  .summary-list .value {
+    font-weight: bold;
+  }
+  .health-badge {
+    display: inline-block;
+    padding: 4px 14px;
+    border-radius: 12px;
+    color: white;
+    font-weight: bold;
+    font-size: 10pt;
+    background: {{ accent_color }};
+  }
+  .headline {
+    font-size: 13pt;
+    font-weight: bold;
+    margin: 10px 0;
+  }
+  .recommendation {
+    background: #FFFBEB;
+    border-left: 4px solid #F59E0B;
+    padding: 10px 14px;
+    margin-top: 14px;
+    font-size: 10pt;
+  }
+</style>
+</head>
+<body>
+
+  <div class="brand">
+    <span class="brand-name">InsightAI</span>
+    <span class="brand-tag">AI-powered data analysis</span>
+  </div>
+
+  <h1>{{ title }}</h1>
+
+  {% if answer %}
+  <div class="answer">{{ answer }}</div>
+  {% endif %}
+
+  {% if narrative %}
+    <div class="headline">{{ narrative.headline }}</div>
+    <span class="health-badge">{{ narrative.health_label }} — {{ narrative.health_score }}/100</span>
+    {% if narrative.summary_points %}
+    <h2>Summary</h2>
+    <ul>
+      {% for point in narrative.summary_points %}
+      <li>{{ point }}</li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+    {% if narrative.recommendation %}
+    <div class="recommendation"><strong>Recommendation:</strong> {{ narrative.recommendation }}</div>
+    {% endif %}
+  {% endif %}
+
+  {% if summary_fields %}
+  <h2>{% if narrative %}KPIs{% else %}Summary{% endif %}</h2>
+  <ul class="summary-list">
+    {% for field, value in summary_fields.items() %}
+    <li><span class="field">{{ field }}</span><span class="value">{{ value }}</span></li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+
+  {% if table_rows %}
+  <h2>Data</h2>
+  <table>
+    <thead>
+      <tr>
+        {% for col in table_columns %}
+        <th>{{ col }}</th>
+        {% endfor %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in table_rows %}
+      <tr>
+        {% for col in table_columns %}
+        <td>{{ row[col] }}</td>
+        {% endfor %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+</body>
+</html>

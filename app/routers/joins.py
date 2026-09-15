@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import User
 from app.models.saved_join import SavedJoin
+from app.schemas.export import JoinExportRequest
 from app.schemas.jobs import JobSubmitResponse
 from app.schemas.join import (
     JoinQueryRequest,
@@ -15,6 +16,7 @@ from app.services import ai_service, join_service
 from app.services.access_control import require_dataset_access, require_workspace_membership
 from app.services.auth_service import get_current_user
 from app.services.job_service import record_job_owner
+from app.tasks.export_tasks import export_join_query_task
 from app.tasks.join_tasks import run_join_query_task, run_saved_join_query_task
 
 router = APIRouter(prefix="/joins", tags=["Joins"])
@@ -203,5 +205,23 @@ def query_saved_join_async(
     require_workspace_membership(db, saved.workspace_id, current_user.id)
 
     task = run_saved_join_query_task.delay(join_id, request.question, current_user.id)
+    record_job_owner(task.id, current_user.id)
+    return JobSubmitResponse(task_id=task.id)
+
+
+@router.post("/{join_id}/export", response_model=JobSubmitResponse, status_code=202)
+def export_join_query(
+    join_id: int,
+    request: JoinExportRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Exports a saved join's query result as CSV/Excel/PDF. Async only — poll GET /jobs/{task_id}, then GET /exports/{export_id}."""
+    saved = db.query(SavedJoin).filter(SavedJoin.id == join_id).first()
+    if not saved:
+        raise HTTPException(status_code=404, detail="Saved join not found")
+    require_workspace_membership(db, saved.workspace_id, current_user.id)
+
+    task = export_join_query_task.delay(join_id, current_user.id, request.question, request.format)
     record_job_owner(task.id, current_user.id)
     return JobSubmitResponse(task_id=task.id)

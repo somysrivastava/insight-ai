@@ -19,7 +19,12 @@ celery_app = Celery(
     "insightai",
     broker=REDIS_URL,
     backend=REDIS_URL,
-    include=["app.tasks.ai_tasks", "app.tasks.analytics_tasks", "app.tasks.join_tasks"],
+    include=[
+        "app.tasks.ai_tasks",
+        "app.tasks.analytics_tasks",
+        "app.tasks.join_tasks",
+        "app.tasks.export_tasks",
+    ],
 )
 
 celery_app.conf.update(
