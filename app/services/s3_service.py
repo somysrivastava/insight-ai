@@ -1,5 +1,3 @@
-from curses import BUTTON_CTRL
-import io
 import os
 
 import boto3
@@ -49,6 +47,12 @@ def generate_presigned_url(s3_key: str, expires_in: int = 3600) -> str:
         return url
     except ClientError as e:
         raise Exception(f"Failed to generate presigned URL: {str(e)}")
+
+def delete_file_from_s3(s3_key: str) -> None:
+    try:
+        s3_client.delete_object(Bucket=BUCKET_NAME, Key=s3_key)
+    except ClientError as e:
+        raise Exception(f"Failed to delete file from S3: {str(e)}")
 
 def get_s3_key(user_id: str, filename: str) -> str:
     return f"uploads/{user_id}/{filename}"

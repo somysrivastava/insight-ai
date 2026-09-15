@@ -58,6 +58,23 @@ services:
       migrate:
         condition: service_completed_successfully
 
+  beat:
+    # Fires the two static schedule entries in app/worker.py's
+    # beat_schedule (poll ScheduledReport rows every minute; sweep
+    # expired exports daily at 3am UTC) — a separate service from
+    # `celery` because Beat only schedules tasks, it doesn't execute
+    # them; `celery` still does the actual work.
+    build: .
+    command: celery -A app.worker beat --loglevel=info
+    <<: *app-env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
   db:
     image: postgres:16-alpine
     environment:

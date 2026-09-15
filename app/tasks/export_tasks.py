@@ -1,17 +1,18 @@
 # WHY THIS FILE EXISTS:
-# One Celery task per exportable thing (Day 15's convention). Each task
-# re-runs the underlying computation fresh (calls ai_service/
-# analytics_service/join_service/report_service directly, the same way
-# the sync/async query endpoints already do) rather than trusting a
-# client-supplied result blob, then hands the result to export_service
-# for formatting. An ExportJob row is written once, when the task
-# finishes — success or failure — never eagerly at submission; Celery's
-# own result (via GET /jobs/{task_id}) already covers "is it ready."
+# The core of each exportable thing (compute result → build an
+# ExportDocument → render → write file → save an ExportJob row) lives in
+# three plain functions (run_dataset_export / run_join_query_export /
+# run_report_export) — NOT inline in the Celery tasks below. Day 19's
+# scheduled reports need this exact same work, synchronously, without
+# chaining a second Celery task and polling its result just to know when
+# to send an email. The three @celery_app.task functions below are thin
+# wrappers: call the matching run_*_export(), turn its ExportJob into
+# the dict shape GET /jobs/{task_id} returns.
 #
-# Each task has two try blocks: the outer one covers the access check
-# (get_dataset_for_user / check_workspace_membership) — if that fails,
-# there's no workspace to scope an audit row to, so it propagates as a
-# plain Celery task failure. The inner one covers everything after
+# Each run_*_export() has two try blocks: the outer one covers the
+# access check (get_dataset_for_user / check_workspace_membership) — if
+# that fails, there's no workspace to scope an audit row to, so it
+# propagates to the caller. The inner one covers everything after
 # access is confirmed, where workspace_id is always known, so a failure
 # there gets a proper "failed" ExportJob row instead.
 
@@ -61,7 +62,7 @@ def _write_export_file(workspace_id: int, source_type: str, source_id: int, form
     return storage_key
 
 
-def _export_result(export_job: ExportJob) -> dict:
+def export_result_dict(export_job: ExportJob) -> dict:
     return {
         "export_id": export_job.id,
         "status": export_job.status,
@@ -72,44 +73,109 @@ def _export_result(export_job: ExportJob) -> dict:
     }
 
 
+def run_dataset_export(db, dataset_id: int, user_id: int, source: str, format: str, question: str | None, group_by: str | None):
+    """Returns (ExportJob, ExportDocument | None) — doc is None only if it was never built (e.g. an unknown source)."""
+    params = {"source": source, "question": question, "group_by": group_by}
+    source_type = "dataset_" + source
+    dataset = get_dataset_for_user(db, dataset_id, user_id)
+
+    doc = None
+    try:
+        if source == "query":
+            result = answer_query(dataset, question)
+            doc = export_service.build_query_document(f"Query: {dataset.filename}", result)
+        elif source == "insights":
+            result = generate_insights(dataset.file_path)
+            doc = export_service.build_insights_document(f"Insights: {dataset.filename}", result)
+        elif source == "trends":
+            result = generate_trends(dataset.file_path)
+            doc = export_service.build_trends_document(f"Trends: {dataset.filename}", result)
+        elif source == "breakdown":
+            result = generate_breakdown(dataset.file_path, group_by)
+            doc = export_service.build_breakdown_document(f"Breakdown by {group_by}: {dataset.filename}", result)
+        else:
+            raise ValueError(f"Unsupported export source: {source}")
+
+        file_bytes = export_service.render(doc, format)
+        file_path = _write_export_file(dataset.workspace_id, source_type, dataset_id, format, file_bytes)
+    except Exception as e:
+        export_job = _save_export_job(
+            db, workspace_id=dataset.workspace_id, user_id=user_id, source_type=source_type,
+            source_id=dataset_id, params=params, format=format, status="failed", error=str(e),
+        )
+        return export_job, doc
+
+    export_job = _save_export_job(
+        db, workspace_id=dataset.workspace_id, user_id=user_id, source_type=source_type,
+        source_id=dataset_id, params=params, format=format, status="success", file_path=file_path,
+    )
+    return export_job, doc
+
+
+def run_join_query_export(db, join_id: int, user_id: int, question: str, format: str):
+    """Returns (ExportJob, ExportDocument | None)."""
+    params = {"question": question}
+    saved_join = db.query(SavedJoin).filter(SavedJoin.id == join_id).first()
+    if not saved_join:
+        raise ValueError(f"Saved join {join_id} not found.")
+    check_workspace_membership(db, saved_join.workspace_id, user_id)
+
+    doc = None
+    try:
+        dataframes, _ = load_and_validate_datasets(db, user_id, saved_join.datasets)
+        joined_df = execute_join(dataframes, saved_join.joins)
+        result = answer_query_for_df(joined_df, question)
+        doc = export_service.build_query_document(f"Join query: {saved_join.name}", result)
+
+        file_bytes = export_service.render(doc, format)
+        file_path = _write_export_file(saved_join.workspace_id, "join_query", join_id, format, file_bytes)
+    except Exception as e:
+        export_job = _save_export_job(
+            db, workspace_id=saved_join.workspace_id, user_id=user_id, source_type="join_query",
+            source_id=join_id, params=params, format=format, status="failed", error=str(e),
+        )
+        return export_job, doc
+
+    export_job = _save_export_job(
+        db, workspace_id=saved_join.workspace_id, user_id=user_id, source_type="join_query",
+        source_id=join_id, params=params, format=format, status="success", file_path=file_path,
+    )
+    return export_job, doc
+
+
+def run_report_export(db, dataset_id: int, user_id: int, format: str):
+    """Returns (ExportJob, ExportDocument | None)."""
+    params: dict = {}
+    dataset = get_dataset_for_user(db, dataset_id, user_id)
+
+    doc = None
+    try:
+        df = load_dataframe(dataset.file_path)
+        report = generate_full_report(dataset.id, dataset.filename, df)
+        doc = export_service.build_report_document(f"Full Report: {dataset.filename}", report.model_dump())
+
+        file_bytes = export_service.render(doc, format, is_report=True)
+        file_path = _write_export_file(dataset.workspace_id, "report", dataset_id, format, file_bytes)
+    except Exception as e:
+        export_job = _save_export_job(
+            db, workspace_id=dataset.workspace_id, user_id=user_id, source_type="report",
+            source_id=dataset_id, params=params, format=format, status="failed", error=str(e),
+        )
+        return export_job, doc
+
+    export_job = _save_export_job(
+        db, workspace_id=dataset.workspace_id, user_id=user_id, source_type="report",
+        source_id=dataset_id, params=params, format=format, status="success", file_path=file_path,
+    )
+    return export_job, doc
+
+
 @celery_app.task(name="export_tasks.export_dataset")
 def export_dataset_task(dataset_id: int, user_id: int, source: str, format: str, question: str | None, group_by: str | None) -> dict:
     db = SessionLocal()
-    params = {"source": source, "question": question, "group_by": group_by}
-    source_type = "dataset_" + source
     try:
-        dataset = get_dataset_for_user(db, dataset_id, user_id)
-
-        try:
-            if source == "query":
-                result = answer_query(dataset, question)
-                doc = export_service.build_query_document(f"Query: {dataset.filename}", result)
-            elif source == "insights":
-                result = generate_insights(dataset.file_path)
-                doc = export_service.build_insights_document(f"Insights: {dataset.filename}", result)
-            elif source == "trends":
-                result = generate_trends(dataset.file_path)
-                doc = export_service.build_trends_document(f"Trends: {dataset.filename}", result)
-            elif source == "breakdown":
-                result = generate_breakdown(dataset.file_path, group_by)
-                doc = export_service.build_breakdown_document(f"Breakdown by {group_by}: {dataset.filename}", result)
-            else:
-                raise ValueError(f"Unsupported export source: {source}")
-
-            file_bytes = export_service.render(doc, format)
-            file_path = _write_export_file(dataset.workspace_id, source_type, dataset_id, format, file_bytes)
-        except Exception as e:
-            export_job = _save_export_job(
-                db, workspace_id=dataset.workspace_id, user_id=user_id, source_type=source_type,
-                source_id=dataset_id, params=params, format=format, status="failed", error=str(e),
-            )
-            return _export_result(export_job)
-
-        export_job = _save_export_job(
-            db, workspace_id=dataset.workspace_id, user_id=user_id, source_type=source_type,
-            source_id=dataset_id, params=params, format=format, status="success", file_path=file_path,
-        )
-        return _export_result(export_job)
+        export_job, _ = run_dataset_export(db, dataset_id, user_id, source, format, question, group_by)
+        return export_result_dict(export_job)
     finally:
         db.close()
 
@@ -117,33 +183,9 @@ def export_dataset_task(dataset_id: int, user_id: int, source: str, format: str,
 @celery_app.task(name="export_tasks.export_join_query")
 def export_join_query_task(join_id: int, user_id: int, question: str, format: str) -> dict:
     db = SessionLocal()
-    params = {"question": question}
     try:
-        saved_join = db.query(SavedJoin).filter(SavedJoin.id == join_id).first()
-        if not saved_join:
-            raise ValueError(f"Saved join {join_id} not found.")
-        check_workspace_membership(db, saved_join.workspace_id, user_id)
-
-        try:
-            dataframes, _ = load_and_validate_datasets(db, user_id, saved_join.datasets)
-            joined_df = execute_join(dataframes, saved_join.joins)
-            result = answer_query_for_df(joined_df, question)
-            doc = export_service.build_query_document(f"Join query: {saved_join.name}", result)
-
-            file_bytes = export_service.render(doc, format)
-            file_path = _write_export_file(saved_join.workspace_id, "join_query", join_id, format, file_bytes)
-        except Exception as e:
-            export_job = _save_export_job(
-                db, workspace_id=saved_join.workspace_id, user_id=user_id, source_type="join_query",
-                source_id=join_id, params=params, format=format, status="failed", error=str(e),
-            )
-            return _export_result(export_job)
-
-        export_job = _save_export_job(
-            db, workspace_id=saved_join.workspace_id, user_id=user_id, source_type="join_query",
-            source_id=join_id, params=params, format=format, status="success", file_path=file_path,
-        )
-        return _export_result(export_job)
+        export_job, _ = run_join_query_export(db, join_id, user_id, question, format)
+        return export_result_dict(export_job)
     finally:
         db.close()
 
@@ -151,28 +193,8 @@ def export_join_query_task(join_id: int, user_id: int, question: str, format: st
 @celery_app.task(name="export_tasks.export_report")
 def export_report_task(dataset_id: int, user_id: int, format: str) -> dict:
     db = SessionLocal()
-    params: dict = {}
     try:
-        dataset = get_dataset_for_user(db, dataset_id, user_id)
-
-        try:
-            df = load_dataframe(dataset.file_path)
-            report = generate_full_report(dataset.id, dataset.filename, df)
-            doc = export_service.build_report_document(f"Full Report: {dataset.filename}", report.model_dump())
-
-            file_bytes = export_service.render(doc, format, is_report=True)
-            file_path = _write_export_file(dataset.workspace_id, "report", dataset_id, format, file_bytes)
-        except Exception as e:
-            export_job = _save_export_job(
-                db, workspace_id=dataset.workspace_id, user_id=user_id, source_type="report",
-                source_id=dataset_id, params=params, format=format, status="failed", error=str(e),
-            )
-            return _export_result(export_job)
-
-        export_job = _save_export_job(
-            db, workspace_id=dataset.workspace_id, user_id=user_id, source_type="report",
-            source_id=dataset_id, params=params, format=format, status="success", file_path=file_path,
-        )
-        return _export_result(export_job)
+        export_job, _ = run_report_export(db, dataset_id, user_id, format)
+        return export_result_dict(export_job)
     finally:
         db.close()

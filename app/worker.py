@@ -9,6 +9,7 @@
 import os
 
 from celery import Celery
+from celery.schedules import crontab
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -24,6 +25,7 @@ celery_app = Celery(
         "app.tasks.analytics_tasks",
         "app.tasks.join_tasks",
         "app.tasks.export_tasks",
+        "app.tasks.scheduled_tasks",
     ],
 )
 
@@ -38,3 +40,18 @@ celery_app.conf.update(
     timezone="UTC",
     enable_utc=True,
 )
+
+# Day 19 — Beat only ever knows about these two static entries. Which
+# ScheduledReport rows exist and when each is actually due lives in the
+# database, not here; poll_due_reports_task figures that out itself
+# every time it runs. See app/tasks/scheduled_tasks.py.
+celery_app.conf.beat_schedule = {
+    "poll-scheduled-reports": {
+        "task": "scheduled_tasks.poll_due_reports",
+        "schedule": crontab(minute="*"),
+    },
+    "cleanup-expired-exports": {
+        "task": "scheduled_tasks.cleanup_expired_exports",
+        "schedule": crontab(hour=3, minute=0),
+    },
+}

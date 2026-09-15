@@ -13,6 +13,7 @@ from app.routers import jobs
 from app.routers import workspaces
 from app.routers import joins
 from app.routers import exports
+from app.routers import schedules
 
 app = FastAPI(
     title="Insight AI",
@@ -54,3 +55,4 @@ app.include_router(jobs.router)
 app.include_router(workspaces.router)
 app.include_router(joins.router)
 app.include_router(exports.router)
+app.include_router(schedules.router)

@@ -9,6 +9,8 @@ venv/
 uploads/
 # Exported files (Day 18)
 exports/
+# Celery Beat local schedule-persistence file (Day 19)
+celerybeat-schedule*
 # IDE
 .vscode/
 .idea/

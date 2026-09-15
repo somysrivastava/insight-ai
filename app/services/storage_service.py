@@ -34,6 +34,10 @@ class StorageBackend(ABC):
     def url_for(self, key: str, expires_in: int = 3600) -> Optional[str]:
         """Return a direct download URL for `key`, or None if the backend has no such concept."""
 
+    @abstractmethod
+    def delete(self, key: str) -> None:
+        """Remove whatever is stored under `key`. No-op if it doesn't exist."""
+
 
 class LocalStorageBackend(StorageBackend):
     def __init__(self, root: str = "app/uploads"):
@@ -58,6 +62,9 @@ class LocalStorageBackend(StorageBackend):
     def url_for(self, key: str, expires_in: int = 3600) -> Optional[str]:
         return None
 
+    def delete(self, key: str) -> None:
+        self._resolve(key).unlink(missing_ok=True)
+
 
 class S3StorageBackend(StorageBackend):
     """Thin adapter over s3_service.py — kept in the codebase but inactive
@@ -77,6 +84,9 @@ class S3StorageBackend(StorageBackend):
 
     def url_for(self, key: str, expires_in: int = 3600) -> Optional[str]:
         return s3_service.generate_presigned_url(self._key(key), expires_in)
+
+    def delete(self, key: str) -> None:
+        s3_service.delete_file_from_s3(self._key(key))
 
 
 def get_storage_backend(purpose: str = "uploads") -> StorageBackend:
