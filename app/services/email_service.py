@@ -71,3 +71,46 @@ def send_export_email(
     response = _get_client().send(message)
     if response.status_code >= 300:
         raise Exception(f"SendGrid returned {response.status_code}: {response.body}")
+
+
+def send_alert_email(
+    recipients: list[str],
+    rule_name: str,
+    dataset_name: str,
+    column: str,
+    metric: str,
+    condition: str,
+    threshold: float,
+    actual_value: float,
+    alert_type: str,
+    z_score: float | None,
+) -> None:
+    """Plain notification email — no attachment, unlike send_export_email (Day 18)."""
+    now = datetime.now(timezone.utc)
+    subject = f"⚠️ Alert: {rule_name} triggered"
+
+    condition_text = {"gt": "above", "lt": "below", "gte": "at or above", "lte": "at or below", "eq": "equal to"}[condition]
+
+    lines = [
+        f"<p><strong>{rule_name}</strong> triggered on dataset <strong>{dataset_name}</strong>.</p>",
+        "<ul>",
+        f"<li>Column: {column}</li>",
+        f"<li>Metric: {metric} = {actual_value:,.2f}</li>",
+        f"<li>Condition: {metric} {condition_text} {threshold:,.2f}</li>",
+    ]
+    if alert_type == "statistical" and z_score is not None:
+        lines.append(f"<li>Statistical: z-score = {z_score:,.2f}</li>")
+    lines.append(f"<li>Detected at: {now.strftime('%Y-%m-%d %H:%M UTC')}</li>")
+    lines.append("</ul>")
+    html_content = "\n".join(lines)
+
+    message = Mail(
+        from_email=os.getenv("SENDGRID_FROM_EMAIL"),
+        to_emails=recipients,
+        subject=subject,
+        html_content=html_content,
+    )
+
+    response = _get_client().send(message)
+    if response.status_code >= 300:
+        raise Exception(f"SendGrid returned {response.status_code}: {response.body}")

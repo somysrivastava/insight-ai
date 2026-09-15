@@ -26,6 +26,7 @@ celery_app = Celery(
         "app.tasks.join_tasks",
         "app.tasks.export_tasks",
         "app.tasks.scheduled_tasks",
+        "app.tasks.alert_tasks",
     ],
 )
 
@@ -53,5 +54,10 @@ celery_app.conf.beat_schedule = {
     "cleanup-expired-exports": {
         "task": "scheduled_tasks.cleanup_expired_exports",
         "schedule": crontab(hour=3, minute=0),
+    },
+    # Day 20 — daily-frequency alert rules.
+    "daily-alert-sweep": {
+        "task": "alert_tasks.daily_alert_sweep",
+        "schedule": crontab(hour=7, minute=0),
     },
 }
