@@ -10,14 +10,25 @@ def generate_insights(file_path: str) -> dict:
 
     summary_stats ={}
 
+    def _safe_round(value, digits=2):
+        # NaN (e.g. std() of a single-row column, or any stat on an
+        # all-null column) isn't valid JSON — json.dumps emits the
+        # literal token `NaN` without erroring, which every prior
+        # caller (an HTTP response) silently tolerated, but Postgres
+        # JSONB correctly rejects as malformed (Day 21 caches this
+        # dict, surfacing the bug for the first time). None serializes
+        # cleanly everywhere NaN doesn't.
+        value = float(value)
+        return None if np.isnan(value) else round(value, digits)
+
     for col in numeric_cols:
         summary_stats[col] = {
-            "mean": round(float(df[col].mean()),2),
-            "median": round(float(df[col].median()),2),
-            "std": round(float(df[col].std()),2),
-            "min": round(float(df[col].min()),2),
-            "max": round(float(df[col].max()),2),
-            "sum": round(float(df[col].sum()),2),
+            "mean": _safe_round(df[col].mean()),
+            "median": _safe_round(df[col].median()),
+            "std": _safe_round(df[col].std()),
+            "min": _safe_round(df[col].min()),
+            "max": _safe_round(df[col].max()),
+            "sum": _safe_round(df[col].sum()),
         }
 
 #kpi () key performance indicators

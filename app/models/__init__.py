@@ -7,6 +7,8 @@ from app.models.export_job import ExportJob
 from app.models.scheduled_report import ScheduledReport
 from app.models.alert_rule import AlertRule
 from app.models.alert_history import AlertHistory
+from app.models.dashboard import Dashboard
+from app.models.dashboard_pin import DashboardPin
 from app.models.user import User
 
 

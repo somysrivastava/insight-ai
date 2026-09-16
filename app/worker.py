@@ -27,6 +27,7 @@ celery_app = Celery(
         "app.tasks.export_tasks",
         "app.tasks.scheduled_tasks",
         "app.tasks.alert_tasks",
+        "app.tasks.dashboard_tasks",
     ],
 )
 
@@ -59,5 +60,10 @@ celery_app.conf.beat_schedule = {
     "daily-alert-sweep": {
         "task": "alert_tasks.daily_alert_sweep",
         "schedule": crontab(hour=7, minute=0),
+    },
+    # Day 21 — refreshes every pin on every active dashboard.
+    "daily-dashboard-refresh": {
+        "task": "dashboard_tasks.daily_dashboard_refresh",
+        "schedule": crontab(hour=6, minute=0),
     },
 }
