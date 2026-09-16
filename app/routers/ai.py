@@ -1,8 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import User
+from app.rate_limiter import limiter
 from app.schemas.ai import QueryRequest, QueryResponse
 from app.schemas.jobs import JobSubmitResponse
 from app.services import ai_service
@@ -15,16 +16,19 @@ router = APIRouter(prefix="/datasets", tags=["AI Queries"])
 
 
 @router.post("/{dataset_id}/query", response_model=QueryResponse)
+@limiter.limit("10/hour")
 def query_dataset(
+    request: Request,
+    response: Response,
     dataset_id: int,
-    request: QueryRequest,
+    body: QueryRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     dataset = require_dataset_access(db, dataset_id, current_user.id)
 
     try:
-        result = ai_service.answer_query(dataset, request.question, db)
+        result = ai_service.get_cached_answer(dataset, body.question, db)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Dataset file not found in storage")
     except ValueError as e:
@@ -36,9 +40,12 @@ def query_dataset(
 
 
 @router.post("/{dataset_id}/query/async", response_model=JobSubmitResponse, status_code=202)
+@limiter.limit("10/hour")
 def query_dataset_async(
+    request: Request,
+    response: Response,
     dataset_id: int,
-    request: QueryRequest,
+    body: QueryRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -50,6 +57,6 @@ def query_dataset_async(
     """
     require_dataset_access(db, dataset_id, current_user.id)
 
-    task = run_query_task.delay(dataset_id, current_user.id, request.question)
+    task = run_query_task.delay(dataset_id, current_user.id, body.question)
     record_job_owner(task.id, current_user.id)
     return JobSubmitResponse(task_id=task.id)

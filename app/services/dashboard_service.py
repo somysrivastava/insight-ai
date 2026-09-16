@@ -21,9 +21,8 @@ from app.models.saved_join import SavedJoin
 from app.models.workspace_member import WorkspaceMember
 from app.services import ai_service, join_service
 from app.services.access_control import check_workspace_membership, get_dataset_for_user
-from app.services.analytics_service import generate_breakdown, generate_insights, generate_trends
-from app.services.kpi_service import compute_kpis
-from app.services.report_service import generate_executive_summary, generate_full_report
+from app.services.analytics_service import get_cached_breakdown, get_cached_insights, get_cached_trends
+from app.services.report_service import get_cached_executive_summary, get_cached_full_report, get_cached_kpis
 from app.services.storage_service import load_dataframe
 
 PIN_TYPES = ("dataset_query", "join_query", "analytics", "report")
@@ -113,7 +112,7 @@ def _execute_pin(
         question = params.get("question")
         if not question:
             raise ValueError("A 'dataset_query' pin requires 'question' in query_params.")
-        return ai_service.answer_query(dataset, question, db)
+        return ai_service.get_cached_answer(dataset, question, db)
 
     if pin_type == "join_query":
         saved = db.query(SavedJoin).filter(SavedJoin.id == source_id).first()
@@ -135,14 +134,14 @@ def _execute_pin(
             raise ValueError("Pinned dataset does not belong to this dashboard's workspace.")
         operation = params.get("operation")
         if operation == "insights":
-            return generate_insights(str(dataset.file_path))
+            return get_cached_insights(source_id, str(dataset.file_path))
         if operation == "trends":
-            return generate_trends(str(dataset.file_path))
+            return get_cached_trends(source_id, str(dataset.file_path))
         if operation == "breakdown":
             group_by = params.get("group_by")
             if not group_by:
                 raise ValueError("An 'analytics' pin with operation 'breakdown' requires 'group_by' in query_params.")
-            return generate_breakdown(str(dataset.file_path), group_by)
+            return get_cached_breakdown(source_id, str(dataset.file_path), group_by)
         raise ValueError(
             f"Unsupported analytics operation '{operation}' — must be 'insights', 'trends', or 'breakdown'."
         )
@@ -154,12 +153,12 @@ def _execute_pin(
         report_type = params.get("report_type")
         df = load_dataframe(dataset.file_path)
         if report_type == "kpis":
-            return compute_kpis(df)
+            return get_cached_kpis(dataset.id, df)
         if report_type == "summary":
-            kpis = compute_kpis(df)
-            return generate_executive_summary(dataset.id, dataset.filename, kpis).model_dump()
+            kpis = get_cached_kpis(dataset.id, df)
+            return get_cached_executive_summary(dataset.id, dataset.filename, kpis).model_dump()
         if report_type == "full":
-            return generate_full_report(dataset.id, dataset.filename, df).model_dump()
+            return get_cached_full_report(dataset.id, dataset.filename, df).model_dump()
         raise ValueError(f"Unsupported report_type '{report_type}' — must be 'kpis', 'summary', or 'full'.")
 
     raise ValueError(f"Unsupported pin_type '{pin_type}' — must be one of {PIN_TYPES}.")

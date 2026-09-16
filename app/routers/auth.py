@@ -1,5 +1,5 @@
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy.orm import Session
 from fastapi.security import OAuth2PasswordRequestForm
 
@@ -8,6 +8,7 @@ from app.models.org import Org
 from app.models.user import User
 from app.models.workspace import Workspace
 from app.models.workspace_member import WorkspaceMember
+from app.rate_limiter import ip_key, limiter
 from app.schemas.user import UserCreate, UserLogin, TokenResponse
 
 from app.services.auth_service import hash_password, create_access_token, verify_password
@@ -17,7 +18,8 @@ router = APIRouter(prefix="/auth", tags=["Auth"])
 # tags=["Auth"] groups them nicely in the Swagger docs
 
 @router.post("/signup", status_code=status.HTTP_201_CREATED)
-def signup(user_data: UserCreate, db: Session = Depends(get_db)):
+@limiter.limit("10/minute", key_func=ip_key)
+def signup(request: Request, response: Response, user_data: UserCreate, db: Session = Depends(get_db)):
     existing_user = db.query(User).filter(User.email == user_data.email).first()
     if existing_user:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered")
@@ -48,7 +50,8 @@ def signup(user_data: UserCreate, db: Session = Depends(get_db)):
     }
 #whats happening up we are chekcing if a user with existing mail already exists if yes return error if no create a new user and commit it into the datwbase
 @router.post("/login", response_model=TokenResponse)
-def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+@limiter.limit("10/minute", key_func=ip_key)
+def login(request: Request, response: Response, form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == form_data.username).first()
     if not user or not verify_password(form_data.password, str(user.hashed_password)):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials", headers={"WWW-Authenticate": "Bearer"})

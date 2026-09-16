@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 
+from app.services import cache_service
 from app.services.storage_service import load_dataframe
 
 def generate_insights(file_path: str) -> dict:
@@ -171,6 +172,47 @@ def generate_breakdown(file_path: str, group_by: str) -> dict:
         "group_by": group_by,
         "breakdown": grouped.to_dict(orient="records")
     }
+
+
+# WHY THESE THREE FUNCTIONS EXIST (Day 25):
+# Thin read-through-cache wrappers around the three functions above —
+# every caller (the sync router, the async Celery tasks, Day 21's
+# dashboard pin dispatcher, Day 18's export tasks) switches to these
+# instead of calling generate_insights/generate_trends/generate_breakdown
+# directly, so the cache benefits every consumer uniformly rather than
+# only whichever one endpoint happened to be wrapped. The underlying
+# functions stay untouched — pure, still directly callable/testable on
+# their own.
+
+
+def get_cached_insights(dataset_id: int, file_path: str) -> dict:
+    key = cache_service.build_cache_key("analytics_insights", dataset_id)
+    cached = cache_service.get_cached(key)
+    if cached is not None:
+        return cached
+    result = generate_insights(file_path)
+    cache_service.set_cached(key, result, cache_service.TTL_ANALYTICS_SECONDS)
+    return result
+
+
+def get_cached_trends(dataset_id: int, file_path: str) -> dict:
+    key = cache_service.build_cache_key("analytics_trends", dataset_id)
+    cached = cache_service.get_cached(key)
+    if cached is not None:
+        return cached
+    result = generate_trends(file_path)
+    cache_service.set_cached(key, result, cache_service.TTL_ANALYTICS_SECONDS)
+    return result
+
+
+def get_cached_breakdown(dataset_id: int, file_path: str, group_by: str) -> dict:
+    key = cache_service.build_cache_key("analytics_breakdown", dataset_id, group_by=group_by)
+    cached = cache_service.get_cached(key)
+    if cached is not None:
+        return cached
+    result = generate_breakdown(file_path, group_by)
+    cache_service.set_cached(key, result, cache_service.TTL_ANALYTICS_SECONDS)
+    return result
 
 
 def _validate_query_column(df: pd.DataFrame, col_name, label: str) -> None:

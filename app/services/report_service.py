@@ -22,6 +22,7 @@ RULE-BASED NARRATIVE (for now):
 import pandas as pd
 from datetime import datetime, timezone
 
+from app.services import cache_service
 from app.services.kpi_service import compute_kpis
 from app.schemas.report import ExecutiveSummary, FullReport
 
@@ -214,3 +215,45 @@ def generate_full_report(
         chart_endpoints=chart_endpoints,
         generated_at=datetime.now(timezone.utc).isoformat(),
     )
+
+
+# WHY THESE THREE FUNCTIONS EXIST (Day 25):
+# Thin read-through-cache wrappers, same reasoning as
+# analytics_service.py's get_cached_insights/trends/breakdown — every
+# real caller (reports.py, export_tasks.py, dashboard_service.py)
+# switches to these instead of calling compute_kpis/
+# generate_executive_summary/generate_full_report directly. Each is
+# cached independently under its own key (not composed from one
+# another's cache entries) — simpler, and all three share the same
+# 5-minute TTL anyway, so there's no real benefit to threading a shared
+# cached kpis result through the other two on a miss.
+
+
+def get_cached_kpis(dataset_id: int, df: pd.DataFrame) -> dict:
+    key = cache_service.build_cache_key("report_kpis", dataset_id)
+    cached = cache_service.get_cached(key)
+    if cached is not None:
+        return cached
+    result = compute_kpis(df)
+    cache_service.set_cached(key, result, cache_service.TTL_REPORT_SECONDS)
+    return result
+
+
+def get_cached_executive_summary(dataset_id: int, filename: str, kpis: dict) -> ExecutiveSummary:
+    key = cache_service.build_cache_key("report_summary", dataset_id)
+    cached = cache_service.get_cached(key)
+    if cached is not None:
+        return ExecutiveSummary(**cached)
+    result = generate_executive_summary(dataset_id, filename, kpis)
+    cache_service.set_cached(key, result.model_dump(), cache_service.TTL_REPORT_SECONDS)
+    return result
+
+
+def get_cached_full_report(dataset_id: int, filename: str, df: pd.DataFrame) -> FullReport:
+    key = cache_service.build_cache_key("report_full", dataset_id)
+    cached = cache_service.get_cached(key)
+    if cached is not None:
+        return FullReport(**cached)
+    result = generate_full_report(dataset_id, filename, df)
+    cache_service.set_cached(key, result.model_dump(), cache_service.TTL_REPORT_SECONDS)
+    return result

@@ -20,6 +20,7 @@ from dotenv import load_dotenv
 from openai import OpenAI
 from sqlalchemy.orm import Session
 
+from app.services import cache_service
 from app.services.analytics_service import execute_structured_query
 from app.services.dictionary_service import get_dictionary
 from app.services.storage_service import load_dataframe
@@ -277,3 +278,26 @@ def answer_query_for_df(df: pd.DataFrame, question: str, column_mappings: dict |
         "query_used": query,
         "tokens_used": response.usage.total_tokens if response.usage else 0,
     }
+
+
+def get_cached_answer(dataset, question: str, db: Session | None = None) -> dict:
+    """
+    Read-through cache wrapper around answer_query() (Day 25) — every
+    real caller (ai.py, ai_tasks.py, export_tasks.py,
+    dashboard_service.py) switches to this instead, so a repeated
+    question against an unchanged dataset skips the OpenAI call
+    entirely, not just re-serves a cached HTTP response. Not applied to
+    answer_query_for_df() (joins, Day 17) — a join has no single
+    dataset_id to key or invalidate by; out of scope here, same
+    deliberate limit as Day 22/23's own noted join gaps. Known
+    staleness: the cache isn't invalidated when a dataset's column
+    dictionary changes (Day 22), only on a version push/rollback —
+    bounded by the 60-minute TTL, not fixed here.
+    """
+    key = cache_service.build_cache_key("ai_query", dataset.id, question=question)
+    cached = cache_service.get_cached(key)
+    if cached is not None:
+        return cached
+    result = answer_query(dataset, question, db)
+    cache_service.set_cached(key, result, cache_service.TTL_AI_QUERY_SECONDS)
+    return result

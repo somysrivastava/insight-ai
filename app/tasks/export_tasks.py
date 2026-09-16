@@ -23,10 +23,10 @@ from app.models import ExportJob
 from app.models.saved_join import SavedJoin
 from app.services import export_service
 from app.services.access_control import check_workspace_membership, get_dataset_for_user
-from app.services.ai_service import answer_query, answer_query_for_df
-from app.services.analytics_service import generate_breakdown, generate_insights, generate_trends
+from app.services.ai_service import answer_query_for_df, get_cached_answer
+from app.services.analytics_service import get_cached_breakdown, get_cached_insights, get_cached_trends
 from app.services.join_service import execute_join, load_and_validate_datasets
-from app.services.report_service import generate_full_report
+from app.services.report_service import get_cached_full_report
 from app.services.storage_service import get_storage_backend, get_storage_key, load_dataframe
 from app.worker import celery_app
 
@@ -82,16 +82,16 @@ def run_dataset_export(db, dataset_id: int, user_id: int, source: str, format: s
     doc = None
     try:
         if source == "query":
-            result = answer_query(dataset, question, db)
+            result = get_cached_answer(dataset, question, db)
             doc = export_service.build_query_document(f"Query: {dataset.filename}", result)
         elif source == "insights":
-            result = generate_insights(dataset.file_path)
+            result = get_cached_insights(dataset_id, dataset.file_path)
             doc = export_service.build_insights_document(f"Insights: {dataset.filename}", result)
         elif source == "trends":
-            result = generate_trends(dataset.file_path)
+            result = get_cached_trends(dataset_id, dataset.file_path)
             doc = export_service.build_trends_document(f"Trends: {dataset.filename}", result)
         elif source == "breakdown":
-            result = generate_breakdown(dataset.file_path, group_by)
+            result = get_cached_breakdown(dataset_id, dataset.file_path, group_by)
             doc = export_service.build_breakdown_document(f"Breakdown by {group_by}: {dataset.filename}", result)
         else:
             raise ValueError(f"Unsupported export source: {source}")
@@ -151,7 +151,7 @@ def run_report_export(db, dataset_id: int, user_id: int, format: str):
     doc = None
     try:
         df = load_dataframe(dataset.file_path)
-        report = generate_full_report(dataset.id, dataset.filename, df)
+        report = get_cached_full_report(dataset.id, dataset.filename, df)
         doc = export_service.build_report_document(f"Full Report: {dataset.filename}", report.model_dump())
 
         file_bytes = export_service.render(doc, format, is_report=True)

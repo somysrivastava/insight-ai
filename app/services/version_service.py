@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.models.dataset import Dataset
 from app.models.dataset_version import DatasetVersion
+from app.services import cache_service
 from app.services.storage_service import get_storage_backend, load_dataframe
 
 
@@ -121,7 +122,11 @@ def _advance_to_new_version(
     current version off, inserts the new one, and mirrors its
     file_path/row_count/column_count onto the Dataset row — one commit,
     so a crash mid-way never leaves Dataset and DatasetVersion
-    disagreeing about which version is current.
+    disagreeing about which version is current. Also where Day 25's
+    cache invalidation hook lives — deliberately here, not narrowly
+    inside push_new_version alone, since rollback changes the dataset's
+    current data exactly as much as a push does and would otherwise
+    leave stale cached analytics/AI-query/report results behind.
     """
     db.query(DatasetVersion).filter(
         DatasetVersion.dataset_id == dataset.id, DatasetVersion.is_current.is_(True)
@@ -150,6 +155,9 @@ def _advance_to_new_version(
         db.rollback()
         raise ValueError("A version push is already in progress for this dataset — try again.")
     db.refresh(version)
+
+    cache_service.invalidate(f"cache:*:{dataset.id}:*")
+
     return version
 
 

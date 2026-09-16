@@ -1,14 +1,16 @@
 import traceback
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import User
 from app.models.bulk_upload_job import BulkUploadJob
 from app.models.workspace_member import WorkspaceMember
+from app.rate_limiter import limiter
 from app.schemas.bulk_upload import BulkUploadJobResponse, BulkUploadSubmitResponse
+from app.services import dataset_service
 from app.services.access_control import require_workspace_access, require_workspace_membership
 from app.services.auth_service import get_current_user
 from app.services.storage_service import get_storage_backend, get_storage_key
@@ -21,7 +23,10 @@ MAX_TOTAL_BYTES = 100 * 1024 * 1024  # 100MB
 
 
 @router.post("", response_model=BulkUploadSubmitResponse, status_code=202)
+@limiter.limit("10/hour")
 async def submit_bulk_upload(
+    request: Request,
+    response: Response,
     files: list[UploadFile] = File(...),
     workspace_id: Optional[int] = Form(None),
     db: Session = Depends(get_db),
@@ -52,6 +57,10 @@ async def submit_bulk_upload(
                 status_code=413,
                 detail=f"Total upload size exceeds the {MAX_TOTAL_BYTES // (1024 * 1024)}MB limit.",
             )
+        try:
+            dataset_service.validate_upload_content_type(f.content_type, f.filename)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
         contents.append((f.filename, file_bytes))
 
     job = BulkUploadJob(

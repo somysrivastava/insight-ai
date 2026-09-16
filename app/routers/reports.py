@@ -23,19 +23,19 @@ AUTHENTICATION:
 """
 
 import pandas as pd
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy.orm import Session
 
 # Adjust these imports to match your actual import paths
 from app.database import get_db
 from app.models.dataset import Dataset               # your SQLAlchemy Dataset model
 from app.models.user import User                     # your SQLAlchemy User model
+from app.rate_limiter import limiter
 from app.services.access_control import require_dataset_access
 from app.services.auth_service import get_current_user   # your JWT dependency
 from app.services.job_service import record_job_owner
 from app.services.storage_service import load_dataframe
-from app.services.report_service import generate_full_report, generate_executive_summary
-from app.services.kpi_service import compute_kpis
+from app.services.report_service import get_cached_executive_summary, get_cached_full_report, get_cached_kpis
 from app.schemas.export import ReportExportRequest
 from app.schemas.jobs import JobSubmitResponse
 from app.schemas.report import KPIReport, ExecutiveSummary, FullReport
@@ -88,7 +88,10 @@ def _load_dataset_df(
 # ─────────────────────────────────────────────────────────────────────────────
 
 @router.get("/{dataset_id}/kpis", response_model=KPIReport)
+@limiter.limit("100/hour")
 def get_kpis(
+    request: Request,
+    response: Response,
     dataset_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -113,7 +116,7 @@ def get_kpis(
         }
     """
     dataset, df = _load_dataset_df(dataset_id, current_user, db)
-    kpis = compute_kpis(df)
+    kpis = get_cached_kpis(dataset.id, df)
 
     return KPIReport(
         dataset_id=dataset.id,
@@ -127,7 +130,10 @@ def get_kpis(
 # ─────────────────────────────────────────────────────────────────────────────
 
 @router.get("/{dataset_id}/summary", response_model=ExecutiveSummary)
+@limiter.limit("100/hour")
 def get_executive_summary(
+    request: Request,
+    response: Response,
     dataset_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -150,8 +156,8 @@ def get_executive_summary(
         }
     """
     dataset, df = _load_dataset_df(dataset_id, current_user, db)
-    kpis = compute_kpis(df)
-    summary = generate_executive_summary(dataset.id, dataset.filename, kpis)
+    kpis = get_cached_kpis(dataset.id, df)
+    summary = get_cached_executive_summary(dataset.id, dataset.filename, kpis)
 
     return summary
 
@@ -161,7 +167,10 @@ def get_executive_summary(
 # ─────────────────────────────────────────────────────────────────────────────
 
 @router.get("/{dataset_id}", response_model=FullReport)
+@limiter.limit("100/hour")
 def get_full_report(
+    request: Request,
+    response: Response,
     dataset_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -182,7 +191,7 @@ def get_full_report(
     pattern at analytics companies (Tableau, Looker, Metabase).
     """
     dataset, df = _load_dataset_df(dataset_id, current_user, db)
-    report = generate_full_report(dataset.id, dataset.filename, df)
+    report = get_cached_full_report(dataset.id, dataset.filename, df)
 
     return report
 

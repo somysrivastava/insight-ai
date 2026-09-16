@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import User
 from app.schemas.version import DatasetVersionResponse
-from app.services import dashboard_service, version_service
+from app.services import dashboard_service, dataset_service, version_service
 from app.services.access_control import require_dataset_access
 from app.services.auth_service import get_current_user
 from app.services.storage_service import get_storage_backend
@@ -43,6 +43,7 @@ async def push_version(
     file_bytes = await file.read()
 
     try:
+        dataset_service.validate_upload_content_type(file.content_type, file.filename)
         version = version_service.push_new_version(
             db, dataset, file_bytes, file.filename, current_user.id, change_summary
         )

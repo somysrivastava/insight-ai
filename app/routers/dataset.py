@@ -3,12 +3,13 @@ import traceback
 from typing import Optional
 
 import pandas as pd
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import Dataset, User
 from app.models.workspace_member import WorkspaceMember
+from app.rate_limiter import limiter
 from app.schemas.export import DatasetExportRequest
 from app.schemas.jobs import JobSubmitResponse
 from app.services import dataset_service
@@ -23,7 +24,10 @@ router = APIRouter()
 
 
 @router.post("/upload")
+@limiter.limit("50/hour")
 async def upload_dataset(
+    request: Request,
+    response: Response,
     file: UploadFile = File(...),
     workspace_id: Optional[int] = Form(None),
     db: Session = Depends(get_db),
@@ -45,6 +49,7 @@ async def upload_dataset(
     resolved_workspace_id = require_workspace_access(db, current_user.id, workspace_id)
 
     try:
+        dataset_service.validate_upload_content_type(file.content_type, file.filename)
         created = dataset_service.create_datasets_from_file(
             db, file_bytes, file.filename, resolved_workspace_id, current_user.id
         )

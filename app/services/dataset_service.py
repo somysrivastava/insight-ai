@@ -23,6 +23,28 @@ def _sanitize_for_key(name: str) -> str:
     return name.strip().replace("/", "_").replace("\\", "_")
 
 
+# Deliberately lenient (Day 25 hardening) — MIME type is client-declared
+# and genuinely inconsistent across browsers/OSes for CSV in particular
+# (text/csv, application/csv, and a bare application/octet-stream are
+# all commonly sent for the identical file). This catches an obviously
+# wrong content type cheaply, before any parsing is attempted; it isn't
+# real content validation — pd.read_csv/read_excel failing cleanly on
+# garbage content already covers that.
+_ALLOWED_UPLOAD_CONTENT_TYPES = {
+    "text/csv",
+    "application/csv",
+    "application/vnd.ms-excel",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/octet-stream",
+    "",
+}
+
+
+def validate_upload_content_type(content_type, filename: str) -> None:
+    if content_type and content_type.lower() not in _ALLOWED_UPLOAD_CONTENT_TYPES:
+        raise ValueError(f"Unsupported content type '{content_type}' for '{filename}' — expected CSV or Excel.")
+
+
 def create_datasets_from_file(
     db: Session, file_bytes: bytes, filename: str, workspace_id: int, user_id: int
 ) -> list[Dataset]:
