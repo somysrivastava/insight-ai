@@ -1,0 +1,10 @@
+.git
+node_modules
+dist
+dist-ssr
+.DS_Store
+.vscode/
+.idea/
+
+# Secrets — injected at container runtime via env_file
+.env

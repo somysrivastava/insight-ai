@@ -1,8 +1,10 @@
 
 import logging
+import os
 import traceback
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
@@ -93,6 +95,24 @@ class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
 
 
 app.add_middleware(RequestSizeLimitMiddleware)
+
+
+# --- Day 26: CORS, for the React frontend (a different origin — the
+# Vite dev server on :5173 — calling this API directly from the
+# browser). Added last (= outermost layer; Starlette wraps middleware
+# in reverse registration order) so CORS headers land on every
+# response this API returns, including a 429/413/500 from an inner
+# middleware — otherwise the browser reports a confusing CORS failure
+# instead of surfacing the real error to the frontend's error handling.
+CORS_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",") if o.strip()]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 # --- Day 25: strip stack traces from unhandled errors ---

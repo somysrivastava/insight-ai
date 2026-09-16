@@ -105,5 +105,28 @@ services:
       timeout: 5s
       retries: 5
 
+  frontend:
+    # Day 26 — Vite's own dev server (HMR), not nginx; see
+    # frontend/Dockerfile for why. VITE_API_URL points at the backend's
+    # host-published port, not a container hostname — Vite only serves
+    # JS to the browser, the actual fetch calls run in the browser on
+    # the host, where "localhost:8000" is exactly where `app` is
+    # published. CORS_ORIGINS on the `app` service (below) has to name
+    # this exact origin or the browser rejects every request.
+    build: ./frontend
+    ports:
+      - "5173:5173"
+    environment:
+      VITE_API_URL: http://localhost:8000
+    volumes:
+      - ./frontend:/app
+      # Named volume for node_modules specifically — without this, the
+      # bind mount above would shadow the container's own Linux-built
+      # node_modules with whatever's on the host (macOS/Windows), and
+      # esbuild/Vite (which install a platform-specific native binary)
+      # would fail to start.
+      - frontend_node_modules:/app/node_modules
+
 volumes:
   postgres_data:
+  frontend_node_modules:
