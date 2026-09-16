@@ -1,6 +1,5 @@
 import io
 import traceback
-from pathlib import Path
 from typing import Optional
 
 import pandas as pd
@@ -12,20 +11,15 @@ from app.models import Dataset, User
 from app.models.workspace_member import WorkspaceMember
 from app.schemas.export import DatasetExportRequest
 from app.schemas.jobs import JobSubmitResponse
+from app.services import dataset_service
 from app.services.access_control import require_dataset_access, require_workspace_access
 from app.services.auth_service import get_current_user
-from app.services import version_service
 from app.services.job_service import record_job_owner
-from app.services.storage_service import get_storage_backend, get_storage_key
+from app.services.storage_service import get_storage_backend
 from app.tasks.alert_tasks import check_dataset_alerts_task
 from app.tasks.export_tasks import export_dataset_task
 
 router = APIRouter()
-
-
-def _sanitize_for_key(name: str) -> str:
-    """Keeps sheet/file names from introducing path separators into a storage key."""
-    return name.strip().replace("/", "_").replace("\\", "_")
 
 
 @router.post("/upload")
@@ -50,54 +44,26 @@ async def upload_dataset(
     file_bytes = await file.read()
     resolved_workspace_id = require_workspace_access(db, current_user.id, workspace_id)
 
-    if file.filename.lower().endswith((".xlsx", ".xls")):
-        try:
-            sheets = pd.read_excel(io.BytesIO(file_bytes), sheet_name=None)
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Invalid Excel file: {str(e)}")
+    try:
+        created = dataset_service.create_datasets_from_file(
+            db, file_bytes, file.filename, resolved_workspace_id, current_user.id
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to store file: {str(e)}")
 
-        if not sheets:
-            raise HTTPException(status_code=400, detail="Excel file has no sheets.")
+    for d in created:
+        # Non-blocking — the upload response doesn't wait for alert
+        # rules to be checked. One sheet = one dataset_id = its own
+        # independent set of watching rules.
+        check_dataset_alerts_task.delay(d.id)
 
-        base_name = Path(file.filename).stem
-        backend = get_storage_backend()
-        created = []
-
-        for sheet_name, df in sheets.items():
-            storage_key = get_storage_key(
-                resolved_workspace_id, f"{_sanitize_for_key(base_name)}__{_sanitize_for_key(sheet_name)}.csv"
-            )
-            try:
-                backend.save(df.to_csv(index=False).encode("utf-8"), storage_key)
-            except Exception as e:
-                traceback.print_exc()
-                raise HTTPException(
-                    status_code=500, detail=f"Failed to store sheet '{sheet_name}': {str(e)}"
-                )
-
-            new_dataset = Dataset(
-                user_id=current_user.id,
-                workspace_id=resolved_workspace_id,
-                filename=file.filename,
-                sheet_name=sheet_name,
-                file_path=storage_key,
-                row_count=len(df),
-                column_count=len(df.columns),
-            )
-            db.add(new_dataset)
-            created.append(new_dataset)
-
-        db.commit()
-        for d in created:
-            db.refresh(d)
-            # Day 23 — version 1 of this dataset's history, reusing the
-            # file already saved above (no duplicate save).
-            version_service.create_initial_version(db, d, current_user.id)
-            # Non-blocking — the upload response doesn't wait for alert
-            # rules to be checked. One sheet = one dataset_id = its own
-            # independent set of watching rules.
-            check_dataset_alerts_task.delay(d.id)
-
+    # A multi-sheet Excel (even a single-sheet one) sets sheet_name;
+    # a plain CSV never does — distinguishes the response shape without
+    # re-checking the original filename's extension here too.
+    if len(created) > 1 or created[0].sheet_name is not None:
         return {
             "message": f"Excel file uploaded successfully — {len(created)} sheet(s) created as separate datasets",
             "datasets": [
@@ -114,33 +80,7 @@ async def upload_dataset(
             ],
         }
 
-    storage_key = get_storage_key(resolved_workspace_id, file.filename)
-
-    try:
-        get_storage_backend().save(file_bytes, storage_key)
-    except Exception as e:
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Failed to store file: {str(e)}")
-
-    try:
-        df = pd.read_csv(io.BytesIO(file_bytes))
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid CSV file: {str(e)}")
-
-    new_dataset = Dataset(
-        user_id=current_user.id,
-        workspace_id=resolved_workspace_id,
-        filename=file.filename,
-        file_path=storage_key,
-        row_count=len(df),
-        column_count=len(df.columns),
-    )
-    db.add(new_dataset)
-    db.commit()
-    db.refresh(new_dataset)
-    version_service.create_initial_version(db, new_dataset, current_user.id)  # Day 23
-    check_dataset_alerts_task.delay(new_dataset.id)  # non-blocking, see above
-
+    new_dataset = created[0]
     return {
         "message": "File uploaded successfully",
         "dataset": {
@@ -149,7 +89,7 @@ async def upload_dataset(
             "rows": new_dataset.row_count,
             "columns": new_dataset.column_count,
             "workspace_id": new_dataset.workspace_id,
-            "storage_key": storage_key,
+            "storage_key": new_dataset.file_path,
             "uploaded_at": new_dataset.created_at,
         }
     }

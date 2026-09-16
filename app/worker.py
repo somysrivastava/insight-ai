@@ -28,6 +28,7 @@ celery_app = Celery(
         "app.tasks.scheduled_tasks",
         "app.tasks.alert_tasks",
         "app.tasks.dashboard_tasks",
+        "app.tasks.bulk_tasks",
     ],
 )
 

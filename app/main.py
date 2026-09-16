@@ -18,6 +18,7 @@ from app.routers import alerts
 from app.routers import dashboards
 from app.routers import dictionary
 from app.routers import versions
+from app.routers import bulk_upload
 
 app = FastAPI(
     title="Insight AI",
@@ -64,3 +65,4 @@ app.include_router(alerts.router)
 app.include_router(dashboards.router)
 app.include_router(dictionary.router)
 app.include_router(versions.router)
+app.include_router(bulk_upload.router)

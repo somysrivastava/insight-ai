@@ -11,6 +11,7 @@ from app.models.alert_history import AlertHistory
 from app.models.dashboard import Dashboard
 from app.models.dashboard_pin import DashboardPin
 from app.models.column_mapping import ColumnMapping
+from app.models.bulk_upload_job import BulkUploadJob
 from app.models.user import User
 
 
