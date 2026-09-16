@@ -18,8 +18,10 @@ import os
 import pandas as pd
 from dotenv import load_dotenv
 from openai import OpenAI
+from sqlalchemy.orm import Session
 
 from app.services.analytics_service import execute_structured_query
+from app.services.dictionary_service import get_dictionary
 from app.services.storage_service import load_dataframe
 
 load_dotenv()
@@ -101,7 +103,10 @@ accordingly.
 the field individual *rows* are ranked by. Use this only for row-level \
 ranking, not for ranking categories/groups (use "groupby" for that).
   - "aggregate": "metric" and "aggregate" — a single computed value over \
-the whole dataset, no grouping or filtering.
+the whole dataset, no grouping or filtering. Exception: for a plain "how \
+many records/rows are there" question with no natural target column, set \
+"aggregate" to "count" and leave "metric" null — every other aggregate \
+("sum"/"mean"/"max"/"min") still requires a real metric column.
   - "correlate": both "column" and "metric" must be set to the two numeric \
 columns being compared. This operation is meaningless with either one \
 missing — never leave both null when the question names two columns.
@@ -119,10 +124,17 @@ question asks for the lowest/smallest/bottom values, in which case use \
 "asc".
 - "explanation" is one sentence describing what the query does, written \
 before you see the result.
+- Some columns include a "display_name", "description", and/or "unit" (from a \
+user-curated data dictionary, Day 22) — use these to understand what a cryptically \
+named column like "del_t" actually means. Always use the column's real "name" field \
+(never "display_name") when filling in "column" or "metric" — "name" is the exact \
+string that must match the dataset; "display_name" is context only, never a value \
+you output.
 """
 
 
-def _build_dataset_context(df: pd.DataFrame) -> dict:
+def _build_dataset_context(df: pd.DataFrame, column_mappings: dict | None = None) -> dict:
+    column_mappings = column_mappings or {}
     columns = []
     for col in df.columns:
         entry: dict = {"name": col, "dtype": str(df[col].dtype)}
@@ -135,6 +147,15 @@ def _build_dataset_context(df: pd.DataFrame) -> dict:
                 entry["median"] = round(float(series.median()), 2)
         else:
             entry["unique_count"] = int(df[col].nunique())
+
+        mapping = column_mappings.get(col)
+        if mapping is not None:
+            entry["display_name"] = mapping.display_name
+            if mapping.description:
+                entry["description"] = mapping.description
+            if mapping.unit:
+                entry["unit"] = mapping.unit
+
         columns.append(entry)
     return {"row_count": len(df), "columns": columns}
 
@@ -175,10 +196,11 @@ def _format_answer(query: dict, result: dict) -> str:
     elif operation == "aggregate":
         value = result["value"]
         formatted_value = f"{int(value):,}" if query["aggregate"] == "count" else f"{value:,.2f}"
-        body = (
-            f"{query['aggregate']} of {query['metric']}: {formatted_value} "
-            f"(across {result['row_count']:,} records)."
-        )
+        metric = result.get("metric")
+        if metric:
+            body = f"{query['aggregate']} of {metric}: {formatted_value} (across {result['row_count']:,} records)."
+        else:
+            body = f"Total record count: {formatted_value}."
 
     elif operation == "correlate":
         corr = result["correlation"]
@@ -198,20 +220,31 @@ def _format_answer(query: dict, result: dict) -> str:
     return f"{explanation} {body}".strip()
 
 
-def answer_query(dataset, question: str) -> dict:
+def answer_query(dataset, question: str, db: Session | None = None) -> dict:
+    """
+    db is optional only for defensive backwards-compatibility — every
+    real caller (ai.py, ai_tasks.py, export_tasks.py, dashboard_service.py)
+    passes it so the dataset's data dictionary (Day 22, if any) enriches
+    the context. Without it, this behaves exactly as it did before Day 22.
+    """
     df = load_dataframe(dataset.file_path)
-    return answer_query_for_df(df, question)
+    column_mappings = get_dictionary(db, dataset.id) if db is not None else None
+    return answer_query_for_df(df, question, column_mappings=column_mappings)
 
 
-def answer_query_for_df(df: pd.DataFrame, question: str) -> dict:
+def answer_query_for_df(df: pd.DataFrame, question: str, column_mappings: dict | None = None) -> dict:
     """
     Same pipeline as answer_query(), operating directly on an in-memory
     DataFrame rather than loading one from a Dataset row's storage. Used
     by the joins feature (Day 17) to run a question against an
     already-joined result — the model never sees or performs the join
-    itself, only this already-computed DataFrame.
+    itself, only this already-computed DataFrame. Joins don't pass
+    column_mappings today (Day 22 scope: a joined DataFrame's
+    alias-prefixed columns span multiple datasets' dictionaries, and
+    merging those cleanly is a real follow-up, not this feature's scope)
+    — the parameter exists so this function is ready for that later.
     """
-    context = _build_dataset_context(df)
+    context = _build_dataset_context(df, column_mappings)
 
     client = _get_client()
     response = client.chat.completions.create(

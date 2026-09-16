@@ -82,7 +82,7 @@ def run_dataset_export(db, dataset_id: int, user_id: int, source: str, format: s
     doc = None
     try:
         if source == "query":
-            result = answer_query(dataset, question)
+            result = answer_query(dataset, question, db)
             doc = export_service.build_query_document(f"Query: {dataset.filename}", result)
         elif source == "insights":
             result = generate_insights(dataset.file_path)

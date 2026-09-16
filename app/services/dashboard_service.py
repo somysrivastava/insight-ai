@@ -89,7 +89,7 @@ def _execute_pin(
         question = params.get("question")
         if not question:
             raise ValueError("A 'dataset_query' pin requires 'question' in query_params.")
-        return ai_service.answer_query(dataset, question)
+        return ai_service.answer_query(dataset, question, db)
 
     if pin_type == "join_query":
         saved = db.query(SavedJoin).filter(SavedJoin.id == source_id).first()

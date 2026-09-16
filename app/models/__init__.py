@@ -9,6 +9,7 @@ from app.models.alert_rule import AlertRule
 from app.models.alert_history import AlertHistory
 from app.models.dashboard import Dashboard
 from app.models.dashboard_pin import DashboardPin
+from app.models.column_mapping import ColumnMapping
 from app.models.user import User
 
 

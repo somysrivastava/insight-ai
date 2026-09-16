@@ -305,16 +305,40 @@ def execute_structured_query(df: pd.DataFrame, query: dict) -> dict:
         }
 
     if operation == "aggregate":
+        if aggregate == "count" and not metric:
+            # "how many records are there" has no natural target column —
+            # counting rows doesn't need one, unlike sum/mean/max/min.
+            # Surfaced by Day 22: richer (dictionary-enriched) context
+            # makes the model more likely to correctly leave metric null
+            # here rather than guessing an arbitrary column.
+            return {
+                "operation": operation,
+                "metric": None,
+                "aggregate": aggregate,
+                "value": len(df),
+                "row_count": len(df),
+            }
+
         _validate_query_column(df, metric, "metric")
         if not metric:
             raise ValueError("aggregate requires 'metric'")
-        series = pd.to_numeric(df[metric], errors="coerce").dropna()
-        value = getattr(series, aggregate)()
+
+        if aggregate == "count":
+            # Counting shouldn't force numeric coercion first — a string
+            # ID column has a real count, not 0. The "filter" operation
+            # already got this right (int(mask.sum())); "aggregate" never
+            # did. Surfaced by testing a genuinely non-numeric metric
+            # column (a string customer-ID field).
+            value = int(df[metric].notna().sum())
+        else:
+            series = pd.to_numeric(df[metric], errors="coerce").dropna()
+            value = round(float(getattr(series, aggregate)()), 2)
+
         return {
             "operation": operation,
             "metric": metric,
             "aggregate": aggregate,
-            "value": round(float(value), 2),
+            "value": value,
             "row_count": len(df),
         }
 

@@ -24,7 +24,7 @@ def query_dataset(
     dataset = require_dataset_access(db, dataset_id, current_user.id)
 
     try:
-        result = ai_service.answer_query(dataset, request.question)
+        result = ai_service.answer_query(dataset, request.question, db)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Dataset file not found in storage")
     except ValueError as e:
