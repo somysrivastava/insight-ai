@@ -42,6 +42,21 @@ celery_app.conf.update(
     result_expires=3600,
     timezone="UTC",
     enable_utc=True,
+    # Day 27 — set only by the test suite. With no worker container in
+    # the test environment, .delay() would otherwise just enqueue onto
+    # Redis and return immediately, leaving nothing to actually run the
+    # task. Eager mode runs the task body synchronously in-process
+    # instead; propagate=True surfaces a task's exception directly at
+    # the .delay() call site rather than swallowing it into a stored
+    # result, which is what a real test failure needs to look like.
+    # task_store_eager_result is what makes that result visible to a
+    # SEPARATE AsyncResult(task_id) lookup (e.g. GET /jobs/{task_id}) —
+    # without it, eager mode never writes to the Redis result backend at
+    # all, and polling would see PENDING forever even though the task
+    # already ran and finished.
+    task_always_eager=os.getenv("CELERY_TASK_ALWAYS_EAGER", "false").lower() == "true",
+    task_eager_propagates=True,
+    task_store_eager_result=True,
 )
 
 # Day 19 — Beat only ever knows about these two static entries. Which

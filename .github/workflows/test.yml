@@ -1,0 +1,84 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      # Real Postgres, not SQLite — several models use
+      # sqlalchemy.dialects.postgresql.JSONB, a dialect-specific type
+      # SQLite has no equivalent for (see docker-compose.yml's test-db
+      # for the same reasoning).
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: insightai
+          POSTGRES_PASSWORD: insightai
+          POSTGRES_DB: insightai_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U insightai"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: valkey/valkey:8-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "valkey-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://insightai:insightai@localhost:5432/insightai_test
+      REDIS_URL: redis://localhost:6379/15
+      SECRET_KEY: ci-test-secret-key-not-used-in-prod
+      ALGORITHM: HS256
+      ACCESS_TOKEN_EXPIRE_MINUTES: "30"
+      STORAGE_BACKEND: local
+      LOCAL_STORAGE_ROOT: /tmp/insightai-test-storage
+      RATE_LIMIT_ENABLED: "false"
+      CELERY_TASK_ALWAYS_EAGER: "true"
+      OPENAI_API_KEY: not-a-real-key
+      OPENAI_MODEL: gpt-4o-mini
+      SENDGRID_API_KEY: not-a-real-key
+      SENDGRID_FROM_EMAIL: noreply@example.com
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      # WeasyPrint (export_service.py, imported transitively by
+      # app.main) needs these native libs at import time, not just when
+      # actually rendering a PDF — same packages as Dockerfile.
+      - name: Install native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libpango-1.0-0 libpangocairo-1.0-0 libpangoft2-1.0-0 \
+            libgdk-pixbuf-2.0-0 libcairo2 libffi8 shared-mime-info fonts-liberation
+
+      - name: Install Python dependencies
+        run: pip install --no-cache-dir -r requirements.txt
+
+      - name: Run migrations against the test database
+        run: alembic upgrade head
+
+      - name: Run tests with coverage
+        run: pytest --cov=app --cov-report=term-missing --cov-report=xml --cov-fail-under=80
+
+      - name: Enforce 100% coverage on security/financial-critical paths
+        run: python scripts/check_coverage.py

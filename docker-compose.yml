@@ -17,6 +17,26 @@ x-app-env: &app-env
     # the host filesystem as a side effect — no separate volume needed.
     - .:/app
 
+# Day 27 — separate from x-app-env above: points at test-db (not db) and
+# redis logical DB 15 (not 0, so cache_service tests never touch dev's
+# real cached results), disables rate limiting (many tests sign up/log
+# in more than the real 10/minute auth limit would allow) and enables
+# Celery eager mode (no worker container exists in the test stack, so
+# .delay() has to run the task body inline or it would just enqueue and
+# never execute). LOCAL_STORAGE_ROOT keeps uploaded test files out of
+# the real app/uploads and app/exports on disk.
+x-test-env: &test-env
+  env_file:
+    - .env
+  environment:
+    DATABASE_URL: postgresql://${POSTGRES_USER:-insightai}:${POSTGRES_PASSWORD:-insightai}@test-db:5432/${POSTGRES_TEST_DB:-insightai_test}
+    REDIS_URL: redis://redis:6379/15
+    RATE_LIMIT_ENABLED: "false"
+    CELERY_TASK_ALWAYS_EAGER: "true"
+    LOCAL_STORAGE_ROOT: /tmp/insightai-test-storage
+  volumes:
+    - .:/app
+
 services:
   migrate:
     # Runs once, applies pending Alembic migrations, then exits. app and
@@ -126,6 +146,54 @@ services:
       # esbuild/Vite (which install a platform-specific native binary)
       # would fail to start.
       - frontend_node_modules:/app/node_modules
+
+  test-db:
+    # Throwaway Postgres for the test suite — deliberately separate from
+    # `db` (never shares its data, never accidentally read/written by a
+    # dev's real dataset) and deliberately without a named volume, since
+    # every test run should start from a schema `migrate-test` just
+    # applied, not from whatever a previous run left behind. JSONB
+    # columns (SavedJoin, DashboardPin, BulkUploadJob, AlertRule,
+    # ScheduledReport, ExportJob) rule out SQLite here — same dialect as
+    # prod is the only option that doesn't also stub the schema.
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-insightai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-insightai}
+      POSTGRES_DB: ${POSTGRES_TEST_DB:-insightai_test}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-insightai}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  migrate-test:
+    # Same one-shot-before-anything-else pattern as `migrate`, pointed
+    # at test-db instead.
+    build: .
+    command: alembic upgrade head
+    <<: *test-env
+    depends_on:
+      test-db:
+        condition: service_healthy
+    restart: "no"
+
+  test:
+    # `docker compose run --rm test` — pytest against test-db, coverage
+    # printed to the console AND written to coverage.xml (bind-mounted
+    # out to the host) so check_coverage.py can enforce the 100%
+    # security/financial-critical-path floor on top of pytest-cov's own
+    # global 80% gate.
+    build: .
+    command: sh -c "pytest --cov=app --cov-report=term-missing --cov-report=xml --cov-fail-under=80 && python scripts/check_coverage.py"
+    <<: *test-env
+    depends_on:
+      test-db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate-test:
+        condition: service_completed_successfully
 
 volumes:
   postgres_data:

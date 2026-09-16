@@ -96,11 +96,17 @@ def get_storage_backend(purpose: str = "uploads") -> StorageBackend:
     "exports" (Day 18, generated CSV/Excel/PDF files). Swapping the
     active backend, or adding a new purpose, is a change here, not in
     every caller.
+
+    LOCAL_STORAGE_ROOT (Day 27) overrides the "app" prefix — unset in
+    dev/prod (defaults to "app", unchanged behavior), set by the test
+    suite to a throwaway directory so integration tests never write into
+    the real app/uploads / app/exports on disk.
     """
     backend = os.getenv("STORAGE_BACKEND", "local").lower()
     if backend == "s3":
         return S3StorageBackend(prefix=purpose)
-    return LocalStorageBackend(root=f"app/{purpose}")
+    root = os.getenv("LOCAL_STORAGE_ROOT", "app")
+    return LocalStorageBackend(root=f"{root}/{purpose}")
 
 
 def get_storage_key(scope_id, filename: str) -> str:

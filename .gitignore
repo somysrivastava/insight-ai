@@ -22,3 +22,9 @@ local_backup.sql
 insightai-key.pem
 # Internal docs — local only, never committed
 docs/
+# Test coverage artifacts (Day 27)
+.coverage
+coverage.xml
+htmlcov/
+.pytest_cache/
+

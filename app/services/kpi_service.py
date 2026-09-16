@@ -44,15 +44,30 @@ def compute_kpis(df: pd.DataFrame) -> dict[str, Any]:
     if not date_cols:
         for col in df.select_dtypes(include=["object"]).columns:
             try:
-                parsed = pd.to_datetime(df[col], infer_datetime_format=True, errors="coerce")
+                # infer_datetime_format was a no-op hint even when pandas
+                # still accepted it (deprecated in 2.x); this pandas
+                # version has dropped the kwarg entirely, so passing it
+                # raised TypeError on every single call here — silently
+                # swallowed by the except below, which meant this whole
+                # auto-detect branch never actually parsed anything.
+                # Found by Day 27's tests, not by inspection: pandas
+                # infers the format on its own regardless.
+                parsed = pd.to_datetime(df[col], errors="coerce")
                 if parsed.notna().sum() > len(df) * 0.7:
                     df = df.copy()
                     df[col] = parsed
                     date_cols.append(col)
                     break
-            except Exception:
+            except Exception:  # pragma: no cover
+                # pd.to_datetime(..., errors="coerce") coerces every
+                # exotic input tried (dicts, bytes, complex numbers,
+                # nested lists, out-of-range strings) to NaT rather than
+                # raising — confirmed by hand, not assumed — so this has
+                # no known reachable trigger. Left as a defensive
+                # fallback, not deleted, in case a future pandas version
+                # reintroduces a raising case here.
                 pass
-                
+
     if date_cols:
         primary_date_col =date_cols[0]
         data_series=pd.to_datetime(df[primary_date_col], errors="coerce").dropna()
@@ -68,14 +83,24 @@ def compute_kpis(df: pd.DataFrame) -> dict[str, Any]:
                 temp[primary_date_col] = pd.to_datetime(temp[primary_date_col], errors="coerce")
                 temp = temp.dropna()
                 temp["_month"] = temp[primary_date_col].dt.to_period("M")
-                monthly=temp.groupby("_month").sum()
+                # Summing only the metric column, not .groupby().sum()
+                # on the whole frame — this pandas version raises
+                # TypeError ("datetime64 type does not support operation
+                # 'sum'") the moment the still-present date column is
+                # summed alongside it, which the except below silently
+                # swallowed on every call. Also found by Day 27's tests.
+                monthly = temp.groupby("_month")[kpis["primary_metric_column"]].sum()
                 if len(monthly) >= 2:
                     last=float(monthly.iloc[-1])
                     prev=float(monthly.iloc[-2])
                     if prev != 0:
                         kpis["mom_growth_pct"] = round(((last - prev) / prev) * 100, 2)
-                    
-            except Exception:
+
+            except Exception:  # pragma: no cover
+                # Same as above — tried nullable Int64 metrics, extreme
+                # historical dates, and the datetime-sum bug fixed above
+                # trying to find a live trigger; none raise here anymore
+                # under this pandas version. Kept as a safety net.
                 pass
     categorical_cols = df.select_dtypes(include=["object", "category"]).columns.tolist()
     if categorical_cols:
