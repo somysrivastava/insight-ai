@@ -60,6 +60,30 @@ def list_dashboards(db: Session, user_id: int) -> list[Dashboard]:
     )
 
 
+def find_dashboards_pinning_dataset(db: Session, dataset_id: int) -> list[int]:
+    """
+    Distinct dashboard_ids with a pin directly sourced from this dataset
+    (Day 23 — called after a version push/rollback to know which
+    dashboards to refresh). Only dataset_query/analytics/report pins
+    are included, since source_id for those three is a dataset id
+    directly. join_query pins aren't: source_id there is a SavedJoin
+    id, and resolving "does this join touch this dataset" needs
+    inspecting SavedJoin.datasets JSONB — a real follow-up, not in
+    scope here (same deliberate limit as Day 22's dictionary
+    enrichment not reaching join queries).
+    """
+    rows = (
+        db.query(DashboardPin.dashboard_id)
+        .filter(
+            DashboardPin.pin_type.in_(("dataset_query", "analytics", "report")),
+            DashboardPin.source_id == dataset_id,
+        )
+        .distinct()
+        .all()
+    )
+    return [r[0] for r in rows]
+
+
 def _execute_pin(
     db: Session,
     pin_type: str,

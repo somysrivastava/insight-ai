@@ -17,6 +17,7 @@ from app.routers import schedules
 from app.routers import alerts
 from app.routers import dashboards
 from app.routers import dictionary
+from app.routers import versions
 
 app = FastAPI(
     title="Insight AI",
@@ -62,3 +63,4 @@ app.include_router(schedules.router)
 app.include_router(alerts.router)
 app.include_router(dashboards.router)
 app.include_router(dictionary.router)
+app.include_router(versions.router)

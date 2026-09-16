@@ -14,6 +14,7 @@ from app.schemas.export import DatasetExportRequest
 from app.schemas.jobs import JobSubmitResponse
 from app.services.access_control import require_dataset_access, require_workspace_access
 from app.services.auth_service import get_current_user
+from app.services import version_service
 from app.services.job_service import record_job_owner
 from app.services.storage_service import get_storage_backend, get_storage_key
 from app.tasks.alert_tasks import check_dataset_alerts_task
@@ -89,6 +90,9 @@ async def upload_dataset(
         db.commit()
         for d in created:
             db.refresh(d)
+            # Day 23 — version 1 of this dataset's history, reusing the
+            # file already saved above (no duplicate save).
+            version_service.create_initial_version(db, d, current_user.id)
             # Non-blocking — the upload response doesn't wait for alert
             # rules to be checked. One sheet = one dataset_id = its own
             # independent set of watching rules.
@@ -134,6 +138,7 @@ async def upload_dataset(
     db.add(new_dataset)
     db.commit()
     db.refresh(new_dataset)
+    version_service.create_initial_version(db, new_dataset, current_user.id)  # Day 23
     check_dataset_alerts_task.delay(new_dataset.id)  # non-blocking, see above
 
     return {

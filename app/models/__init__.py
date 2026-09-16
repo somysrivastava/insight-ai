@@ -2,6 +2,7 @@ from app.models.org import Org
 from app.models.workspace import Workspace
 from app.models.workspace_member import WorkspaceMember
 from app.models.dataset import Dataset
+from app.models.dataset_version import DatasetVersion
 from app.models.saved_join import SavedJoin
 from app.models.export_job import ExportJob
 from app.models.scheduled_report import ScheduledReport
